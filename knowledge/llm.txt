@@ -1,0 +1,13 @@
+Large Language Models
+
+A large language model, usually called an LLM, is a computer model trained to process and generate language. During training, the model reads a very large collection of text and learns statistical patterns between tokens. A token may be a word, part of a word, punctuation mark, or another small unit of text. The model does not store a simple list of sentences. Instead, it adjusts many numerical parameters so that it becomes better at predicting likely tokens.
+
+When an LLM receives a prompt, it processes the tokens in that prompt and predicts a suitable next token. It then repeats this operation to produce a response. The process is probabilistic, so the same prompt can sometimes produce different wording. Settings such as temperature can control how predictable or varied the output is.
+
+An LLM has a context window. This is the limited amount of input and generated text that the model can consider in one request. A larger context window can hold more material, but it also requires more memory and computation. The context window is not permanent memory. Information from an earlier request is unavailable unless an application sends that information again.
+
+LLMs can summarize, classify, explain, rewrite, and generate text. Instruction-tuned models are trained to follow user directions more effectively than base models. However, an LLM can produce statements that sound confident but are unsupported or incorrect. This behavior is often called hallucination. The model's training data may also be incomplete, outdated, or unsuitable for a specific university subject.
+
+Applications therefore need controls around an LLM. A prompt can state the task and expected behavior, while retrieval can supply relevant reference material. The application should still validate important outputs and make uncertainty visible. For a study assistant, the LLM should explain information from approved course documents and identify its sources rather than pretending to know facts that are missing.
+
+Ollama is software that can run compatible language models on a local computer. Local execution can improve privacy and reduce dependence on an internet service, although performance is limited by the computer's GPU, memory, and model size. In this lab, the generation model will eventually receive a student question together with retrieved text. It will not be treated as the source of the course facts.

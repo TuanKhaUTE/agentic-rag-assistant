@@ -1,0 +1,13 @@
+AI Agents and Tool Use
+
+An AI agent is a software system that uses a model to choose actions in pursuit of a goal. A normal language-model request usually contains input and returns text once. An agent can instead decide that it needs an external capability, call that capability as a tool, inspect the result, and continue reasoning before producing a final response.
+
+A tool is a regular function exposed to the model through a clear definition. The definition normally includes a tool name, a description, input parameters, and the expected result. For example, a calculator tool can accept a mathematical expression, while a file-reading tool can accept a permitted relative path. The model does not execute the Python function by itself. It returns a structured request, and the surrounding application validates and executes that request.
+
+The result returned by a tool is called an observation or tool result. The application adds the observation to the conversation so that the model can use it in its next decision. This creates an agent loop: receive a goal, request a tool when needed, validate the request, execute the tool, record the observation, and ask the model what to do next. The loop ends when the model gives a final answer or when a safety limit is reached.
+
+Tool use can make an agent more reliable for tasks that a language model should not perform from memory. A calculator supplies exact arithmetic. A knowledge-search tool can return course material. File tools can report the actual contents of approved local files. Tools also introduce risk because model output is not automatically trustworthy. Arguments can be invalid, a requested path can escape an allowed directory, or repeated calls can waste resources.
+
+Guardrails are therefore part of the agent design. Useful controls include an allowlist of tool names, strict argument types, path validation, limits on tool calls and output size, timeouts, and clear error results. A calculator should parse only permitted arithmetic rather than execute unrestricted code. Read-only tools should not silently gain file-writing behavior. Tool calls and observations should be logged so that a student can explain what happened.
+
+In a later phase of this lab, retrieval will become a search_knowledge tool alongside calculator, list_files, and read_file. The standalone RAG system is built first so its behavior remains understandable when the agent begins calling it.

@@ -1,0 +1,15 @@
+New Technologies in Software Engineering
+
+Software engineering changes as new tools and methods become practical. A new technology is useful only when it helps a team build, test, deploy, operate, or understand software more effectively. Teams should evaluate benefits, costs, security, maintainability, and the skills required instead of adopting a tool only because it is popular.
+
+Generative AI is one current area of change. Language models can assist with explaining code, drafting tests, summarizing documentation, and suggesting implementations. Their output still requires review because generated code can contain incorrect assumptions, insecure behavior, or dependencies that do not fit a project. Retrieval-augmented generation can connect a model to approved project documentation, while agentic systems can let a model request controlled tools. Both approaches need logging, evaluation, and guardrails.
+
+Cloud computing provides computing resources through network services. It can make infrastructure easier to scale and can reduce the need to own physical servers. Serverless computing is one cloud approach in which a provider manages much of the execution infrastructure. These services can improve delivery speed, but teams must consider cost variability, availability, data location, and dependence on a provider.
+
+Containers package an application with the files and settings it needs to run. They support consistent execution across development and deployment environments. Container orchestration platforms can manage many containers, but they add operational complexity. A small application may not need the same infrastructure as a large distributed service.
+
+DevOps practices connect software development with deployment and operations. Continuous integration automatically checks changes, while continuous delivery prepares validated changes for release. Infrastructure as code describes infrastructure through version-controlled files. Observability uses logs, metrics, and traces to help teams understand a running system. These practices aim to shorten feedback cycles and make failures easier to diagnose.
+
+Other important areas include edge computing, Internet of Things systems, low-code tools, and software supply-chain security. Edge computing moves some processing closer to where data is produced. Connected devices require careful updates and security. Low-code platforms can speed up some business applications but may limit customization. Supply-chain security examines dependencies, build systems, and artifact origins.
+
+A responsible evaluation begins with a specific problem and measurable criteria. A team can build a small experiment, compare it with the existing approach, record limitations, and decide whether the technology is appropriate. Newness alone is not evidence of software-engineering value.

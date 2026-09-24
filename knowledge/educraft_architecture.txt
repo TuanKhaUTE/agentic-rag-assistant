@@ -1,0 +1,13 @@
+EduCraft Architecture
+
+EduCraft is an educational system with three high-level user roles: Admin, Teacher, and Student. These roles describe the main participants in the system. They should not be treated as evidence for lower-level technical details that have not been verified.
+
+The Teacher creates assignments and provides reference materials. These materials give students information connected to the work they are expected to complete. The Student responds by submitting images of handwritten notes. The use of handwritten-note images means that the submitted learning artifact is visual rather than ordinary typed text.
+
+EduCraft's backend can use one of several AI-provider approaches: a mock provider, Gemini, or Ollama. A mock provider can represent AI behavior without depending on a real model service. Gemini is an external AI option, while Ollama can provide access to a model running locally. The presence of these options means that the AI provider can vary, but it does not by itself prove any particular internal processing pipeline.
+
+The AI produces suggestions or an evaluation related to the submitted work. This output assists the educational process, but it does not replace the Teacher's judgment. The Teacher remains the final authority. Any AI-generated suggestion or evaluation must therefore be understood as supporting information rather than an automatic final academic decision.
+
+EduCraft currently does not implement retrieval-augmented generation, or RAG. In particular, the verified high-level description does not say that reference materials are divided into chunks, converted into embeddings, searched as vectors, or retrieved as context for a language model. Those mechanisms belong to the separate RAG laboratory being built in this project. They must not be claimed as existing EduCraft features.
+
+Keeping this distinction clear is important when explaining the architecture. EduCraft has users, assignments, reference materials, handwritten-note image submissions, selectable AI-provider approaches, and AI-supported suggestions or evaluation. The Teacher retains final authority. Beyond these verified facts, no additional implementation details should be inferred. If the system later adds RAG, that would be a new capability and would need its own verified design and implementation evidence.
