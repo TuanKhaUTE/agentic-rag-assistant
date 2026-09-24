@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Phase 1C
+## Current scope: Phase 1D
 
 The project currently implements:
 
@@ -16,10 +16,12 @@ The project currently implements:
 - L2-normalizing and saving the embedding matrix; and
 - saving chunk metadata in exactly the same row order;
 - embedding and normalizing a user question; and
-- ranking all chunks with an explicit NumPy dot product.
+- ranking all chunks with an explicit NumPy dot product;
+- constructing labelled context from the raw Top-3 chunks; and
+- generating a grounded, source-cited answer with local Qwen.
 
-Prompt construction, LLM generation, relevance thresholds, vector databases,
-and agent tools are intentionally not implemented yet.
+Relevance thresholds, reranking, vector databases, evaluation, and agent tools
+are intentionally not implemented yet.
 
 ## Project layout
 
@@ -33,6 +35,7 @@ inspect_chunks.py   Phase 1A inspection entry point
 build_index.py      Builds and saves the Phase 1B embedding index
 inspect_embeddings.py  Inspects saved vectors without performing retrieval
 inspect_retrieval.py   Prints every score and the complete Top-K chunks
+ask.py                 Runs the visible Phase 1D RAG pipeline
 ```
 
 ## Run Phase 1A
@@ -58,6 +61,12 @@ Inspect retrieval with the default question or a supplied question:
 ```powershell
 .\.venv\Scripts\python.exe inspect_retrieval.py
 .\.venv\Scripts\python.exe inspect_retrieval.py "What is an AI agent?"
+```
+
+Run the complete grounded RAG path with:
+
+```powershell
+.\.venv\Scripts\python.exe ask.py "What is an AI agent and how does it use tools?"
 ```
 
 The script prints each document's path, title, and word count. It then prints

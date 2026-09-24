@@ -11,5 +11,6 @@ CHUNK_SIZE_WORDS = 180
 CHUNK_OVERLAP_WORDS = 30
 
 EMBEDDING_MODEL = "all-minilm:latest"
+GENERATION_MODEL = "qwen3:4b-instruct"
 
 TOP_K = 3
