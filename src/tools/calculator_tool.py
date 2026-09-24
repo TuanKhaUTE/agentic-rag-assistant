@@ -10,7 +10,10 @@ CALCULATOR_SCHEMA = {
         "properties": {
             "expression": {
                 "type": "string",
-                "description": "Arithmetic using numbers, +, -, *, /, and parentheses.",
+                "description": (
+                    "Arithmetic using numbers, +, -, *, /, and parentheses. "
+                    "Use each stated quantity once; N items used M times each is N * M."
+                ),
             }
         },
         "required": ["expression"],

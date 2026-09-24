@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Phase 2A
+## Current scope: Phase 2B
 
 The project currently implements:
 
@@ -22,9 +22,9 @@ The project currently implements:
 - applying a calibrated pre-generation relevance threshold; and
 - evaluating answerable and unanswerable questions.
 
-Reranking, vector databases, hybrid search, and agent tools are intentionally
-not part of Phase 1. Phase 2A adds four manually callable, validated tools but
-does not connect them to an LLM or an agent loop.
+Reranking, vector databases, and hybrid search are intentionally not part of
+Phase 1. Phase 2B adds a visible, bounded native tool-calling loop around the
+four Phase 2A tools. It has no shell, file-writing, or external-network tool.
 
 ## Project layout
 
@@ -41,6 +41,7 @@ inspect_retrieval.py   Prints every score and the complete Top-K chunks
 ask.py                 Runs the visible thresholded RAG pipeline
 evaluate_rag.py        Runs the seven-question Phase 1E evaluation
 inspect_tools.py       Manually exercises every Phase 2A tool
+run_agent.py           Runs the visible five-step Phase 2B Agent loop
 ```
 
 ## Run Phase 1A
@@ -84,6 +85,12 @@ Inspect the standalone Phase 2A tools with:
 
 ```powershell
 .\.venv\Scripts\python.exe inspect_tools.py
+```
+
+Run the controlled Agent with a user goal:
+
+```powershell
+.\.venv\Scripts\python.exe run_agent.py "Calculate (125 * 8) / 4."
 ```
 
 The script prints each document's path, title, and word count. It then prints
