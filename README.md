@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Phase 1E
+## Current scope: Phase 2A
 
 The project currently implements:
 
@@ -23,7 +23,8 @@ The project currently implements:
 - evaluating answerable and unanswerable questions.
 
 Reranking, vector databases, hybrid search, and agent tools are intentionally
-not implemented yet.
+not part of Phase 1. Phase 2A adds four manually callable, validated tools but
+does not connect them to an LLM or an agent loop.
 
 ## Project layout
 
@@ -39,6 +40,7 @@ inspect_embeddings.py  Inspects saved vectors without performing retrieval
 inspect_retrieval.py   Prints every score and the complete Top-K chunks
 ask.py                 Runs the visible thresholded RAG pipeline
 evaluate_rag.py        Runs the seven-question Phase 1E evaluation
+inspect_tools.py       Manually exercises every Phase 2A tool
 ```
 
 ## Run Phase 1A
@@ -76,6 +78,12 @@ Run the complete evaluation with:
 
 ```powershell
 .\.venv\Scripts\python.exe evaluate_rag.py
+```
+
+Inspect the standalone Phase 2A tools with:
+
+```powershell
+.\.venv\Scripts\python.exe inspect_tools.py
 ```
 
 The script prints each document's path, title, and word count. It then prints
