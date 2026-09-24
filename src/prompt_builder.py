@@ -1,4 +1,9 @@
-SYSTEM_INSTRUCTION = """You are a grounded study assistant.
+INSUFFICIENT_INFORMATION_MESSAGE = (
+    "The knowledge base does not contain enough information to answer this question."
+)
+
+
+SYSTEM_INSTRUCTION = f"""You are a grounded study assistant.
 
 Answer using ONLY the supplied context.
 Do not use outside knowledge to fill missing facts.
@@ -9,7 +14,7 @@ In answer citations, do not include the word SOURCE; copy only the chunk ID.
 Every paragraph containing factual claims must include at least one source label.
 Never invent a source label.
 If the supplied context does not contain enough information, respond with exactly this sentence:
-The knowledge base does not contain enough information to answer this question."""
+{INSUFFICIENT_INFORMATION_MESSAGE}"""
 
 
 def build_grounded_prompt(

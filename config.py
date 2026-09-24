@@ -14,3 +14,4 @@ EMBEDDING_MODEL = "all-minilm:latest"
 GENERATION_MODEL = "qwen3:4b-instruct"
 
 TOP_K = 3
+MIN_SIMILARITY = 0.30
