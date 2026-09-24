@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Phase 1B
+## Current scope: Phase 1C
 
 The project currently implements:
 
@@ -14,10 +14,12 @@ The project currently implements:
 - preserving source and word-position metadata; and
 - converting chunk text into 384-dimensional embeddings with Ollama;
 - L2-normalizing and saving the embedding matrix; and
-- saving chunk metadata in exactly the same row order.
+- saving chunk metadata in exactly the same row order;
+- embedding and normalizing a user question; and
+- ranking all chunks with an explicit NumPy dot product.
 
-Similarity search, retrieval, prompt construction, LLM generation, and agent
-tools are intentionally not implemented yet.
+Prompt construction, LLM generation, relevance thresholds, vector databases,
+and agent tools are intentionally not implemented yet.
 
 ## Project layout
 
@@ -30,6 +32,7 @@ config.py           Shared paths and chunk settings
 inspect_chunks.py   Phase 1A inspection entry point
 build_index.py      Builds and saves the Phase 1B embedding index
 inspect_embeddings.py  Inspects saved vectors without performing retrieval
+inspect_retrieval.py   Prints every score and the complete Top-K chunks
 ```
 
 ## Run Phase 1A
@@ -48,6 +51,13 @@ Build and inspect the persistent embedding index with:
 ```powershell
 .\.venv\Scripts\python.exe build_index.py
 .\.venv\Scripts\python.exe inspect_embeddings.py
+```
+
+Inspect retrieval with the default question or a supplied question:
+
+```powershell
+.\.venv\Scripts\python.exe inspect_retrieval.py
+.\.venv\Scripts\python.exe inspect_retrieval.py "What is an AI agent?"
 ```
 
 The script prints each document's path, title, and word count. It then prints
