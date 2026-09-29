@@ -99,3 +99,44 @@ def get_document_metadata(document_id: str) -> dict[str, object]:
         raise DocumentNotFoundError("Document metadata is unavailable.") from error
 
     return metadata
+
+
+def get_document_directory(document_id: str) -> Path:
+    document_directory = _document_directory(document_id)
+    if not (document_directory / "metadata.json").is_file():
+        raise DocumentNotFoundError("Document not found.")
+    return document_directory
+
+
+def get_original_file_path(document_id: str) -> Path:
+    metadata = get_document_metadata(document_id)
+    file_type = str(metadata.get("file_type", ""))
+    if file_type not in {"txt", "pdf", "docx"}:
+        raise DocumentNotFoundError("Stored document type is invalid.")
+
+    original_path = get_document_directory(document_id) / f"original.{file_type}"
+    if not original_path.is_file():
+        raise DocumentNotFoundError("Stored original document is unavailable.")
+    return original_path
+
+
+def update_document_metadata(
+    document_id: str,
+    updates: dict[str, object],
+) -> dict[str, object]:
+    metadata = get_document_metadata(document_id)
+    metadata.update(updates)
+
+    metadata_path = get_document_directory(document_id) / "metadata.json"
+    temporary_path = metadata_path.with_name("metadata.json.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temporary_path.replace(metadata_path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+    return metadata

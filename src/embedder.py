@@ -29,3 +29,20 @@ def embed_texts(texts: list[str]) -> np.ndarray:
         raise ValueError(f"Expected a 2D embedding matrix, received shape {matrix.shape}")
 
     return matrix
+
+
+def normalize_embeddings(embeddings: np.ndarray) -> np.ndarray:
+    """L2-normalize an embedding matrix and return float32 vectors."""
+    matrix = np.asarray(embeddings, dtype=np.float32)
+    if matrix.ndim != 2:
+        raise ValueError(f"Expected a 2D embedding matrix, received shape {matrix.shape}")
+
+    vector_lengths = np.linalg.norm(matrix, axis=1, keepdims=True)
+    if np.any(vector_lengths == 0):
+        raise ValueError("Cannot normalize a zero-length embedding vector")
+
+    normalized = (matrix / vector_lengths).astype(np.float32, copy=False)
+    normalized_lengths = np.linalg.norm(normalized, axis=1)
+    if not np.allclose(normalized_lengths, 1.0, atol=1e-5):
+        raise ValueError("L2 normalization verification failed")
+    return normalized

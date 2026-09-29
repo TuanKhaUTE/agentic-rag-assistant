@@ -19,8 +19,20 @@ class DocumentMetadataResponse(BaseModel):
     file_type: Literal["txt", "pdf", "docx"]
     characters: int
     words: int
-    status: Literal["extracted"]
+    status: Literal["extracted", "indexed"]
+    chunk_count: int | None = None
+    embedding_model: str | None = None
+    embedding_dimension: int | None = None
 
 
 class DocumentUploadResponse(DocumentMetadataResponse):
     text_preview: str
+
+
+class DocumentIndexResponse(BaseModel):
+    document_id: str
+    filename: str
+    status: Literal["indexed"]
+    chunk_count: int
+    embedding_model: str
+    embedding_dimension: int

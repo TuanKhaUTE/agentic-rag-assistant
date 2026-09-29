@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Slice 3A document extraction
+## Current scope: Slice 3B uploaded-document indexing
 
 The project currently implements:
 
@@ -32,6 +32,9 @@ Slice 2 adds a temporary in-browser React chat history that calls only that API.
 Slice 3A accepts local TXT, text-based PDF, and DOCX uploads, extracts their
 text, and stores safe metadata. Uploaded documents are not yet chunked,
 embedded, indexed, retrieved, or connected to chat.
+Slice 3B can turn one uploaded document into a separate local chunk and vector
+index. Query retrieval and chat integration for uploaded documents are not yet
+implemented.
 
 ## Project layout
 
@@ -57,6 +60,7 @@ frontend/              Minimal React and Vite chat interface
 uploads/               Ignored local document storage, organized by document ID
 src/documents/          Upload storage and TXT/PDF/DOCX text extraction
 inspect_document.py    Inspects extraction from one local document
+inspect_uploaded_index.py  Inspects one uploaded document's chunks and vectors
 ```
 
 ## Run Phase 1A
@@ -192,6 +196,25 @@ normal text-based PDFs only; scanned image PDFs require OCR, which is not part
 of this slice. The API returns at most a 500-character preview and never returns
 the complete extracted document text.
 
+Index an uploaded document using the ID returned by the upload endpoint:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/documents/<document_id>/index"
+```
+
+Inspect the generated document-specific index:
+
+```powershell
+python inspect_uploaded_index.py "<document_id>"
+```
+
+Each index is stored separately under
+`uploads/<document_id>/index/` as `chunks.json` and `embeddings.npy`. Repeating
+the indexing request rebuilds a temporary complete index and replaces the one
+canonical `index/` directory, so chunks are never appended or duplicated. The
+static homework index under `storage/` is not modified.
+
 The script prints each document's path, title, and word count. It then prints
 every chunk, its ID, its 0-based end-exclusive word range, its overlap with the
 previous chunk, and its full text.
@@ -215,6 +238,8 @@ FastAPI file uploads. No OCR library is included.
 
 ## Known Limitations
 
+- Uploaded-document indexes cannot yet be queried or used by chat.
+- Each uploaded document has its own index; combined document retrieval is not implemented.
 - The knowledge base contains only five small documents.
 - Chunking uses word counts rather than semantic or token-aware boundaries.
 - `all-minilm` can miss nuance or rank generally related text above the best passage.

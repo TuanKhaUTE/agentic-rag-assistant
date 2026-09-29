@@ -13,7 +13,7 @@ from config import (
 )
 from src.chunker import chunk_documents
 from src.document_loader import load_documents
-from src.embedder import embed_texts
+from src.embedder import embed_texts, normalize_embeddings
 
 
 def main() -> None:
@@ -50,16 +50,8 @@ def main() -> None:
     print(f"   PASS: {len(chunks)} chunks match {embeddings.shape[0]} rows")
 
     print("5. Applying L2 normalization...")
-    vector_lengths = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    if np.any(vector_lengths == 0):
-        raise ValueError("Cannot normalize a zero-length embedding vector")
-    normalized_embeddings = (embeddings / vector_lengths).astype(
-        np.float32,
-        copy=False,
-    )
+    normalized_embeddings = normalize_embeddings(embeddings)
     normalized_lengths = np.linalg.norm(normalized_embeddings, axis=1)
-    if not np.allclose(normalized_lengths, 1.0, atol=1e-5):
-        raise ValueError("L2 normalization verification failed")
     print(
         "   Vector norm range after normalization: "
         f"{normalized_lengths.min():.6f} to {normalized_lengths.max():.6f}"

@@ -9,7 +9,10 @@ from src.documents.storage import (
     EmptyUploadError,
     UploadTooLargeError,
     create_document,
+    get_document_directory,
     get_document_metadata,
+    get_original_file_path,
+    update_document_metadata,
 )
 
 
@@ -21,6 +24,9 @@ __all__ = [
     "UploadTooLargeError",
     "create_document",
     "extract_text",
+    "get_document_directory",
     "get_document_metadata",
+    "get_original_file_path",
     "supported_extension",
+    "update_document_metadata",
 ]

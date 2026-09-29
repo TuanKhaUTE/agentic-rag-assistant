@@ -8,6 +8,7 @@ from config import MAX_UPLOAD_BYTES
 from src.api.schemas import (
     ChatRequest,
     ChatResponse,
+    DocumentIndexResponse,
     DocumentMetadataResponse,
     DocumentUploadResponse,
 )
@@ -21,6 +22,7 @@ from src.documents import (
     get_document_metadata,
     supported_extension,
 )
+from src.documents.indexer import DocumentIndexError, index_uploaded_document
 
 
 logger = logging.getLogger(__name__)
@@ -62,7 +64,11 @@ def chat(request: ChatRequest) -> ChatResponse:
     )
 
 
-@app.post("/documents/upload", response_model=DocumentUploadResponse)
+@app.post(
+    "/documents/upload",
+    response_model=DocumentUploadResponse,
+    response_model_exclude_none=True,
+)
 async def upload_document(file: UploadFile = File(...)) -> DocumentUploadResponse:
     filename = file.filename or ""
 
@@ -95,6 +101,7 @@ async def upload_document(file: UploadFile = File(...)) -> DocumentUploadRespons
 @app.get(
     "/documents/{document_id}",
     response_model=DocumentMetadataResponse,
+    response_model_exclude_none=True,
 )
 def document_metadata(document_id: str) -> DocumentMetadataResponse:
     try:
@@ -109,3 +116,26 @@ def document_metadata(document_id: str) -> DocumentMetadataResponse:
         ) from error
 
     return DocumentMetadataResponse(**metadata)
+
+
+@app.post(
+    "/documents/{document_id}/index",
+    response_model=DocumentIndexResponse,
+)
+def index_document(document_id: str) -> DocumentIndexResponse:
+    try:
+        metadata = index_uploaded_document(document_id)
+    except DocumentNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DocumentExtractionError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except DocumentIndexError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("Document indexing failed: %s", type(error).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail="The document could not be indexed.",
+        ) from error
+
+    return DocumentIndexResponse(**metadata)
