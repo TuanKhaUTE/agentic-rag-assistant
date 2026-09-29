@@ -1,5 +1,6 @@
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import ollama
@@ -31,6 +32,13 @@ Give a final answer only after enough information has been gathered."""
 MAX_STEPS_MESSAGE = f"Agent stopped safely after reaching the maximum of {MAX_STEPS} steps."
 
 
+@dataclass(frozen=True)
+class AgentRunResult:
+    answer: str
+    steps: int
+    tools_used: list[str]
+
+
 def _message_value(message: object, name: str, default: object = None) -> object:
     if isinstance(message, dict):
         return message.get(name, default)
@@ -52,12 +60,12 @@ def _assistant_message_for_history(message: object) -> dict[str, object]:
     raise TypeError("Model returned an unsupported message type")
 
 
-def run_agent(
+def _run_agent(
     user_goal: str,
     *,
     chat_callable: Callable[..., Any] = ollama.chat,
-) -> str:
-    """Run a bounded native tool-calling loop and print observable events."""
+) -> AgentRunResult:
+    """Run the single shared Agent loop and collect its observable metadata."""
     if not isinstance(user_goal, str) or not user_goal.strip():
         raise ValueError("User goal must be a non-empty string")
 
@@ -65,6 +73,7 @@ def run_agent(
         {"role": "system", "content": AGENT_SYSTEM_INSTRUCTION},
         {"role": "user", "content": user_goal},
     ]
+    tools_used: list[str] = []
 
     print("=== USER GOAL ===")
     print(user_goal)
@@ -91,13 +100,14 @@ def run_agent(
             print("Model decision: Final answer")
             print("\n=== FINAL ANSWER ===")
             print(answer)
-            return answer
+            return AgentRunResult(answer=answer, steps=step, tools_used=tools_used)
 
         print("Model decision: Tool call")
         messages.append(_assistant_message_for_history(model_message))
 
         for tool_call in tool_calls:
             tool_name, arguments = _tool_call_parts(tool_call)
+            tools_used.append(tool_name)
             print(f"Tool: {tool_name}")
             print("Arguments:")
             print(json.dumps(arguments, indent=2, ensure_ascii=False, default=str))
@@ -125,4 +135,26 @@ def run_agent(
 
     print("\n=== FINAL ANSWER ===")
     print(MAX_STEPS_MESSAGE)
-    return MAX_STEPS_MESSAGE
+    return AgentRunResult(
+        answer=MAX_STEPS_MESSAGE,
+        steps=MAX_STEPS,
+        tools_used=tools_used,
+    )
+
+
+def run_agent(
+    user_goal: str,
+    *,
+    chat_callable: Callable[..., Any] = ollama.chat,
+) -> str:
+    """Run the Agent and return its answer, preserving the original CLI API."""
+    return _run_agent(user_goal, chat_callable=chat_callable).answer
+
+
+def run_agent_with_metadata(
+    user_goal: str,
+    *,
+    chat_callable: Callable[..., Any] = ollama.chat,
+) -> AgentRunResult:
+    """Run the same Agent loop and also return step and tool metadata."""
+    return _run_agent(user_goal, chat_callable=chat_callable)

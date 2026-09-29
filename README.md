@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Phase 2C
+## Current scope: Slice 1 HTTP API
 
 The project currently implements:
 
@@ -27,6 +27,7 @@ Phase 1. Phase 2B adds a visible, bounded native tool-calling loop around the
 four Phase 2A tools. It has no shell, file-writing, or external-network tool.
 Phase 2C adds evaluation and final lecturer-facing documentation without
 changing the Agent architecture.
+Slice 1 adds a minimal local FastAPI wrapper that reuses the existing Agent.
 
 ## Project layout
 
@@ -46,6 +47,8 @@ inspect_tools.py       Manually exercises every Phase 2A tool
 run_agent.py           Runs the visible five-step Phase 2B Agent loop
 evaluate_agent.py      Evaluates six Agent scenarios and four safety checks
 FINAL_SUMMARY.md       Concise lecturer-friendly project summary
+run_api.py             Starts the local FastAPI development server
+src/api/               Request/response schemas and HTTP endpoints
 ```
 
 ## Run Phase 1A
@@ -102,6 +105,36 @@ Run the final Agent evaluation with:
 ```powershell
 .\.venv\Scripts\python.exe evaluate_agent.py
 ```
+
+## Run the local API
+
+Start the backend from the project root:
+
+```powershell
+.\.venv\Scripts\python.exe run_api.py
+```
+
+In a second PowerShell window, check health and send chat requests:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8000/health"
+
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/chat" `
+  -ContentType "application/json" `
+  -Body (@{ message = "Say hello in one short sentence." } | ConvertTo-Json)
+
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/chat" `
+  -ContentType "application/json" `
+  -Body (@{ message = "What is RAG? Use the study knowledge base." } | ConvertTo-Json)
+
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/chat" `
+  -ContentType "application/json" `
+  -Body (@{ message = "Calculate 10 * 25." } | ConvertTo-Json)
+```
+
+`POST /chat` accepts one non-empty `message` and returns the final `answer`,
+the number of model `steps`, and the ordered `tools_used`. The API does not
+store chat history between requests.
 
 The script prints each document's path, title, and word count. It then prints
 every chunk, its ID, its 0-based end-exclusive word range, its overlap with the
