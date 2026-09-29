@@ -1,10 +1,26 @@
 import logging
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.agent import run_agent_with_metadata
-from src.api.schemas import ChatRequest, ChatResponse
+from config import MAX_UPLOAD_BYTES
+from src.api.schemas import (
+    ChatRequest,
+    ChatResponse,
+    DocumentMetadataResponse,
+    DocumentUploadResponse,
+)
+from src.documents import (
+    DocumentExtractionError,
+    DocumentNotFoundError,
+    EmptyUploadError,
+    UnsupportedDocumentTypeError,
+    UploadTooLargeError,
+    create_document,
+    get_document_metadata,
+    supported_extension,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -44,3 +60,52 @@ def chat(request: ChatRequest) -> ChatResponse:
         steps=result.steps,
         tools_used=result.tools_used,
     )
+
+
+@app.post("/documents/upload", response_model=DocumentUploadResponse)
+async def upload_document(file: UploadFile = File(...)) -> DocumentUploadResponse:
+    filename = file.filename or ""
+
+    try:
+        supported_extension(filename)
+        file_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+        metadata = create_document(file_bytes, filename)
+    except UnsupportedDocumentTypeError as error:
+        raise HTTPException(status_code=415, detail=str(error)) from error
+    except EmptyUploadError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except UploadTooLargeError as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
+    except DocumentExtractionError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("Document upload failed: %s", type(error).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail="The document could not be uploaded.",
+        ) from error
+    finally:
+        await file.close()
+
+    return DocumentUploadResponse(**metadata)
+
+
+@app.get(
+    "/documents/{document_id}",
+    response_model=DocumentMetadataResponse,
+)
+def document_metadata(document_id: str) -> DocumentMetadataResponse:
+    try:
+        metadata = get_document_metadata(document_id)
+    except DocumentNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("Document metadata lookup failed: %s", type(error).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail="Document metadata could not be retrieved.",
+        ) from error
+
+    return DocumentMetadataResponse(**metadata)

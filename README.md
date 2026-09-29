@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Slice 2 React chat UI
+## Current scope: Slice 3A document extraction
 
 The project currently implements:
 
@@ -29,6 +29,9 @@ Phase 2C adds evaluation and final lecturer-facing documentation without
 changing the Agent architecture.
 Slice 1 adds a minimal local FastAPI wrapper that reuses the existing Agent.
 Slice 2 adds a temporary in-browser React chat history that calls only that API.
+Slice 3A accepts local TXT, text-based PDF, and DOCX uploads, extracts their
+text, and stores safe metadata. Uploaded documents are not yet chunked,
+embedded, indexed, retrieved, or connected to chat.
 
 ## Project layout
 
@@ -51,6 +54,9 @@ FINAL_SUMMARY.md       Concise lecturer-friendly project summary
 run_api.py             Starts the local FastAPI development server
 src/api/               Request/response schemas and HTTP endpoints
 frontend/              Minimal React and Vite chat interface
+uploads/               Ignored local document storage, organized by document ID
+src/documents/          Upload storage and TXT/PDF/DOCX text extraction
+inspect_document.py    Inspects extraction from one local document
 ```
 
 ## Run Phase 1A
@@ -158,6 +164,34 @@ Open `http://localhost:5173`. The browser sends messages only to FastAPI at
 `http://127.0.0.1:8000/chat`; it never calls Ollama directly. Message history
 exists only in React state and is cleared when the page is refreshed.
 
+## Upload and inspect documents
+
+With the backend running, upload one supported document from PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/documents/upload" `
+  -Form @{ file = Get-Item ".\notes.pdf" }
+```
+
+Retrieve safe metadata using the returned document ID:
+
+```powershell
+Invoke-RestMethod -Method Get `
+  -Uri "http://127.0.0.1:8000/documents/<document_id>"
+```
+
+Inspect extraction without uploading:
+
+```powershell
+python inspect_document.py ".\notes.docx"
+```
+
+Uploads are limited to 10 MB. TXT files must be UTF-8. PDF extraction supports
+normal text-based PDFs only; scanned image PDFs require OCR, which is not part
+of this slice. The API returns at most a 500-character preview and never returns
+the complete extracted document text.
+
 The script prints each document's path, title, and word count. It then prints
 every chunk, its ID, its 0-based end-exclusive word range, its overlap with the
 previous chunk, and its full text.
@@ -175,7 +209,9 @@ For example, the first two full chunks use word ranges `[0, 180)` and
 
 Document loading and chunking use only the Python standard library. Phase 1B
 uses NumPy for the vector matrix and the official Ollama Python client to call
-the local `all-minilm:latest` embedding model.
+the local `all-minilm:latest` embedding model. Slice 3A uses `pypdf` for
+text-based PDFs, `python-docx` for DOCX files, and `python-multipart` for
+FastAPI file uploads. No OCR library is included.
 
 ## Known Limitations
 

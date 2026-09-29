@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, StringConstraints
 
@@ -11,3 +11,16 @@ class ChatResponse(BaseModel):
     answer: str
     steps: int
     tools_used: list[str]
+
+
+class DocumentMetadataResponse(BaseModel):
+    document_id: str
+    filename: str
+    file_type: Literal["txt", "pdf", "docx"]
+    characters: int
+    words: int
+    status: Literal["extracted"]
+
+
+class DocumentUploadResponse(DocumentMetadataResponse):
+    text_preview: str
