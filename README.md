@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Slice 1 HTTP API
+## Current scope: Slice 2 React chat UI
 
 The project currently implements:
 
@@ -28,6 +28,7 @@ four Phase 2A tools. It has no shell, file-writing, or external-network tool.
 Phase 2C adds evaluation and final lecturer-facing documentation without
 changing the Agent architecture.
 Slice 1 adds a minimal local FastAPI wrapper that reuses the existing Agent.
+Slice 2 adds a temporary in-browser React chat history that calls only that API.
 
 ## Project layout
 
@@ -49,6 +50,7 @@ evaluate_agent.py      Evaluates six Agent scenarios and four safety checks
 FINAL_SUMMARY.md       Concise lecturer-friendly project summary
 run_api.py             Starts the local FastAPI development server
 src/api/               Request/response schemas and HTTP endpoints
+frontend/              Minimal React and Vite chat interface
 ```
 
 ## Run Phase 1A
@@ -135,6 +137,26 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/chat" `
 `POST /chat` accepts one non-empty `message` and returns the final `answer`,
 the number of model `steps`, and the ordered `tools_used`. The API does not
 store chat history between requests.
+
+## Run the chat UI
+
+Start the backend in the first terminal:
+
+```powershell
+python run_api.py
+```
+
+Start the frontend in a second terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. The browser sends messages only to FastAPI at
+`http://127.0.0.1:8000/chat`; it never calls Ollama directly. Message history
+exists only in React state and is cleared when the page is refreshed.
 
 The script prints each document's path, title, and word count. It then prints
 every chunk, its ID, its 0-based end-exclusive word range, its overlap with the
