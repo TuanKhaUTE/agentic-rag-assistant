@@ -27,6 +27,7 @@ from src.documents import (
 from src.documents.indexer import DocumentIndexError, index_uploaded_document
 from src.documents.question_answering import answer_uploaded_document
 from src.documents.retriever import DocumentNotIndexedError
+from src.generator import GenerationConfigurationError
 
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,8 @@ def ask_indexed_document(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DocumentNotIndexedError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except GenerationConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except DocumentIndexError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
     except Exception as error:

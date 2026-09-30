@@ -2,7 +2,12 @@ import sys
 
 import numpy as np
 
-from config import EMBEDDING_MODEL
+from config import (
+    EMBEDDING_MODEL,
+    GEMINI_MODEL,
+    LLM_PROVIDER,
+    OLLAMA_GENERATION_MODEL,
+)
 from src.documents import DocumentNotFoundError
 from src.documents.indexer import DocumentIndexError
 from src.documents.question_answering import answer_uploaded_document
@@ -69,6 +74,11 @@ def main() -> None:
         print("No context was sent because generation was skipped.")
 
     print("\n=== FINAL ANSWER ===")
+    selected_model = (
+        GEMINI_MODEL if LLM_PROVIDER == "gemini" else OLLAMA_GENERATION_MODEL
+    )
+    print(f"Generation provider: {LLM_PROVIDER}")
+    print(f"Generation model: {selected_model}")
     print(result["answer"])
 
 

@@ -40,8 +40,8 @@ def answer_uploaded_document(
     else:
         answer = INSUFFICIENT_INFORMATION_MESSAGE
 
-    # After retrieval passes, Qwen can still find that the supplied chunks do
-    # not support an answer and return the required refusal sentence.
+    # After retrieval passes, the configured generator can still find that the
+    # supplied chunks do not support an answer and return the required refusal.
     answerable = answer != INSUFFICIENT_INFORMATION_MESSAGE
 
     return {

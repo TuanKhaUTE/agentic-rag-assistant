@@ -13,7 +13,7 @@ documents
 → Top-K retrieval
 → relevance threshold
 → labelled context
-→ grounded Qwen answer with citations
+→ configured Ollama/Qwen or Gemini answer with citations
 ```
 
 The RAG system loads five local study documents, creates overlapping chunks,
@@ -21,6 +21,9 @@ and stores one 384-dimensional vector per chunk in a persistent local Chroma
 collection. A question is embedded with the same model and sent to Chroma for
 Top-K cosine retrieval. Low-relevance questions
 are rejected before generation; relevant chunks become labelled prompt context.
+Ollama with `qwen3:4b-instruct` is the default RAG generator; Gemini is an
+optional cloud generator. Both receive the same grounded prompt. The Agent's
+native tool-calling loop remains Ollama/Qwen-only.
 
 ### Part 2: Controlled Agent
 
@@ -83,7 +86,7 @@ capabilities are **not implemented in this homework**.
 - Only four tools are available.
 - The RAG corpus contains only five small documents.
 - There is no persistent memory between runs.
-- There is no internet access.
+- Default Ollama operation is local; selecting Gemini requires cloud access.
 - Vector retrieval can rank a generally related chunk above the best passage.
 - Agent behavior is probabilistic, so repeated runs may differ.
 - There is no reranker, hosted vector service, or automatic factual verification.

@@ -17,7 +17,8 @@ The project currently implements:
 - embedding and normalizing a user question; and
 - querying a cosine-distance Chroma collection for Top-K chunks;
 - constructing labelled context from the raw Top-3 chunks; and
-- generating a grounded, source-cited answer with local Qwen;
+- generating a grounded, source-cited answer with local Qwen by default or
+  optional Gemini;
 - applying a calibrated pre-generation relevance threshold; and
 - evaluating answerable and unanswerable questions.
 
@@ -175,7 +176,8 @@ index. Detaching clears only the React state and routes later messages back to
 `/chat`; it does not delete the server-side upload. Every stored message retains
 a General Assistant or document filename label so mode changes remain visible.
 
-The browser calls only FastAPI and never calls Ollama directly. Chat messages,
+The browser calls only FastAPI and never calls Ollama or Gemini directly. Chat
+messages,
 the selected document, and document answers exist only in React state and are
 cleared when the page is refreshed.
 
@@ -207,8 +209,77 @@ React question
 → query embedding
 → cosine Top-K from that document only
 → labelled context
-→ Qwen
+→ configured RAG generation provider (Ollama/Qwen or Gemini)
 → grounded answer plus retrieval metadata
+```
+
+## Generation providers
+
+The RAG answer generator supports two providers:
+
+1. `ollama` is the default. It runs `qwen3:4b-instruct` locally.
+2. `gemini` is optional cloud inference through the official `google-genai`
+   SDK and requires Gemini API authentication.
+
+These settings are read when Python starts:
+
+```text
+LLM_PROVIDER=ollama
+OLLAMA_GENERATION_MODEL=qwen3:4b-instruct
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_API_KEY=<environment variable only>
+```
+
+Both providers receive the same grounded system and user prompts from
+`src/prompt_builder.py`. No Gemini key is stored in source code or sent to
+React. A missing key while `LLM_PROVIDER=gemini`, or an unknown provider name,
+produces a controlled configuration error and never silently falls back.
+
+The embedding model, vector database, and generation model have separate jobs:
+
+- `all-minilm:latest` converts chunks and questions into embedding vectors.
+- local Chroma stores those vectors and performs Top-K retrieval.
+- Qwen or Gemini reads the retrieved text and generates the cited answer.
+
+Switching between Qwen and Gemini does **not** require rebuilding Chroma because
+the stored `all-minilm` embeddings are unchanged. Changing the embedding model
+would require re-embedding and re-indexing every document.
+
+The Agent is intentionally separate: `/chat` continues to use its native
+Ollama/Qwen tool-calling loop. `LLM_PROVIDER` selects only standalone and
+uploaded-document RAG answer generation; it does not make Gemini control the
+Agent.
+
+### Test Gemini from PowerShell
+
+Set current-session variables before starting or restarting the backend:
+
+```powershell
+$env:GEMINI_API_KEY="paste-your-key-here"
+$env:LLM_PROVIDER="gemini"
+$env:GEMINI_MODEL="gemini-2.5-flash"
+python run_api.py
+```
+
+Run the React frontend in its usual second terminal, open
+`http://localhost:5173`, and upload a small TXT document containing a distinctive
+fact, for example: `The Aurora Lab review meeting is every Thursday at 3 PM.`
+After indexing completes, ask in the browser:
+
+```text
+When is the Aurora Lab review meeting?
+```
+
+The request must be in active-document mode so it uses
+`/documents/{document_id}/ask`. General `/chat` remains the Ollama Agent.
+
+To return to local generation, stop and restart the backend after running:
+
+```powershell
+$env:LLM_PROVIDER="ollama"
+$env:OLLAMA_GENERATION_MODEL="qwen3:4b-instruct"
+Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue
+python run_api.py
 ```
 
 ## Upload and inspect documents
@@ -265,7 +336,7 @@ python ask_document.py "<document_id>" "What is the main topic?"
 
 The endpoint loads only the Chroma index belonging to the supplied document ID.
 It embeds the question with `all-minilm:latest`, asks Chroma for that document's
-cosine Top-3, and sends labelled context to Qwen only
+cosine Top-3, and sends labelled context to the configured RAG generator only
 when the highest score reaches `MIN_SIMILARITY`. The `0.30` cutoff is an
 educational heuristic calibrated on the static homework corpus, not a universal
 confidence score; different uploaded-document collections may require new
@@ -275,7 +346,8 @@ Uploaded-document answerability has two visible checks:
 
 1. `retrieval_gate_passed` reports whether the highest cosine similarity meets
    the heuristic threshold. If it fails, `generation_called` is false.
-2. If the gate passes, Qwen receives only the retrieved context. It can still
+2. If the gate passes, the configured generator receives only the retrieved
+   context. It can still
    return the exact insufficient-information response when the requested fact
    is absent; in that case `generation_called` is true and `answerable` is false.
 
@@ -308,6 +380,8 @@ Document loading and chunking use only the Python standard library. The
 official Ollama Python client calls local `all-minilm:latest`; NumPy performs
 L2 normalization before the vectors are supplied explicitly to local Chroma.
 Chroma stores and queries those vectors and does not select an embedding model.
+The official `google-genai` SDK is used only when Gemini is selected for RAG
+answer generation.
 Slice 3A uses `pypdf` for
 text-based PDFs, `python-docx` for DOCX files, and `python-multipart` for
 FastAPI file uploads. No OCR library is included.
@@ -327,7 +401,8 @@ FastAPI file uploads. No OCR library is included.
 - `build_index.py` rebuilds the static `static_knowledge` collection;
   `src/documents/indexer.py` rebuilds one isolated uploaded-document collection.
 - `src/prompt_builder.py` places retrieved chunks into labelled context, and
-  `src/generator.py` contains the exact local generation-model call.
+  `src/generator.py` selects the RAG provider and contains the exact Ollama and
+  Gemini inference calls.
 - `inspect_retrieval.py`, `ask.py`, and `ask_document.py` make Top-K records,
   scores, the relevance decision, context, answers, and chunk-ID citations
   visible for verification.
@@ -350,5 +425,6 @@ after a passed gate, the grounded model can still refuse an unsupported answer.
 - The similarity threshold is a heuristic calibrated on only seven questions and cannot perfectly separate every answerable and unanswerable query.
 - Chroma is local and single-process for this homework; there is no hosted or distributed vector service.
 - There is no hybrid keyword and vector search.
-- Answer generation uses a small local 4B model with limited reasoning capacity.
+- The default local 4B generation model has limited reasoning capacity; Gemini
+  requires an external cloud request and valid API credentials.
 - Generated claims are not automatically checked against source text for factual accuracy.

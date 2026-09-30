@@ -1,6 +1,12 @@
 import sys
 
-from config import MIN_SIMILARITY, TOP_K
+from config import (
+    GEMINI_MODEL,
+    LLM_PROVIDER,
+    MIN_SIMILARITY,
+    OLLAMA_GENERATION_MODEL,
+    TOP_K,
+)
 from src.generator import generate_answer
 from src.prompt_builder import (
     INSUFFICIENT_INFORMATION_MESSAGE,
@@ -54,6 +60,13 @@ def main() -> None:
 
     print("=== FINAL CONTEXT SENT TO LLM ===")
     print(context)
+
+    selected_model = (
+        GEMINI_MODEL if LLM_PROVIDER == "gemini" else OLLAMA_GENERATION_MODEL
+    )
+    print("\n=== GENERATION PROVIDER ===")
+    print(f"Provider: {LLM_PROVIDER}")
+    print(f"Model: {selected_model}")
 
     print("\n=== SYSTEM PROMPT ===")
     print(system_message)

@@ -4,8 +4,10 @@ from pathlib import Path
 
 from config import (
     EMBEDDING_MODEL,
-    GENERATION_MODEL,
+    GEMINI_MODEL,
+    LLM_PROVIDER,
     MIN_SIMILARITY,
+    OLLAMA_GENERATION_MODEL,
     PROJECT_ROOT,
     TOP_K,
 )
@@ -284,7 +286,11 @@ def print_pipeline_summary(rows: list[dict[str, object]]) -> None:
     print(f"Embedding dimension: {collection.metadata['embedding_dimension']}")
     print("Retrieval: Chroma cosine distance; similarity = 1 - distance")
     print(f"Top-K: {TOP_K}")
-    print(f"Generation model: {GENERATION_MODEL}")
+    generation_model = (
+        GEMINI_MODEL if LLM_PROVIDER == "gemini" else OLLAMA_GENERATION_MODEL
+    )
+    print(f"Generation provider: {LLM_PROVIDER}")
+    print(f"Generation model: {generation_model}")
     print(f"Similarity threshold: {MIN_SIMILARITY:.2f} (heuristic)")
     print(
         "Answerable tests passed: "
