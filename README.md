@@ -226,7 +226,7 @@ These settings are read when Python starts:
 ```text
 LLM_PROVIDER=ollama
 OLLAMA_GENERATION_MODEL=qwen3:4b-instruct
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.5-flash
 GEMINI_API_KEY=<environment variable only>
 ```
 
@@ -257,7 +257,7 @@ Set current-session variables before starting or restarting the backend:
 ```powershell
 $env:GEMINI_API_KEY="paste-your-key-here"
 $env:LLM_PROVIDER="gemini"
-$env:GEMINI_MODEL="gemini-2.5-flash"
+$env:GEMINI_MODEL="gemini-3.5-flash"
 python run_api.py
 ```
 
@@ -352,7 +352,8 @@ Uploaded-document answerability has two visible checks:
    is absent; in that case `generation_called` is true and `answerable` is false.
 
 The legacy `sufficient_context` response field remains as a compatibility alias
-for `retrieval_gate_passed`; it does not claim that Qwen found an answer.
+for `retrieval_gate_passed`; it does not claim that the configured generation
+provider produced an answer.
 
 Each uploaded index is stored separately under
 `uploads/<document_id>/chroma/`. Repeating the indexing request deletes and
@@ -361,9 +362,9 @@ never appended or duplicated. The static collection under `storage/chroma/`
 is not modified. Uploaded retrieval also applies a `document_id` metadata
 filter as a second isolation check.
 
-The script prints each document's path, title, and word count. It then prints
-every chunk, its ID, its 0-based end-exclusive word range, its overlap with the
-previous chunk, and its full text.
+The `inspect_chunks.py` script prints each static knowledge document's path,
+title, and word count. It then prints every chunk, its ID, its 0-based
+end-exclusive word range, its overlap with the previous chunk, and its full text.
 
 ## Chunk settings
 
