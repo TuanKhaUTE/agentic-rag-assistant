@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { sendChatMessage } from "./services/chatApi.js";
 import {
-  askDocument,
+  askDocuments,
   DocumentApiError,
   indexDocument,
   uploadDocument,
@@ -27,7 +27,7 @@ const EXAMPLE_PROMPTS = [
     text: "Use the study knowledge base to explain AI agents, then calculate 3 * 2.",
   },
 ];
-const SUPPORTED_EXTENSIONS = ["txt", "pdf", "docx"];
+const SUPPORTED_EXTENSIONS = ["txt", "md", "pdf", "docx"];
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 
@@ -87,6 +87,9 @@ function GeneralMetadata({ steps, toolsUsed }) {
 
 function DocumentMetadata({ result }) {
   const chunkCount = result.retrieved_chunks.length;
+  const documentLabel = result.document_count > 1
+    ? `${result.document_count} documents`
+    : result.filename ?? result.filenames?.[0] ?? "1 document";
   return (
     <details className="rag-details">
       <summary>
@@ -102,7 +105,7 @@ function DocumentMetadata({ result }) {
       </summary>
       <div className="rag-details-body">
         <dl className="answer-summary">
-          <div><dt>Document</dt><dd>{result.filename}</dd></div>
+          <div><dt>Knowledge base</dt><dd>{documentLabel}</dd></div>
           <div><dt>Highest similarity</dt><dd>{result.highest_similarity.toFixed(3)}</dd></div>
           <div><dt>Top-K</dt><dd>{result.top_k}</dd></div>
           <div><dt>Heuristic threshold</dt><dd>{result.similarity_threshold.toFixed(2)}</dd></div>
@@ -114,7 +117,7 @@ function DocumentMetadata({ result }) {
         <ol className="source-list">
           {result.retrieved_chunks.map((chunk) => (
             <li key={chunk.chunk_id}>
-              <span>{chunk.chunk_id}</span>
+              <span><b>{chunk.source}</b><small>{chunk.chunk_id}</small></span>
               <strong>{chunk.score.toFixed(3)}</strong>
             </li>
           ))}
@@ -127,11 +130,11 @@ function DocumentMetadata({ result }) {
 
 function validateSelectedFile(file) {
   if (!file) {
-    return "Select a TXT, PDF, or DOCX file first.";
+    return "Select a TXT, Markdown, PDF, or DOCX file first.";
   }
   const extension = file.name.toLowerCase().split(".").pop();
   if (!SUPPORTED_EXTENSIONS.includes(extension)) {
-    return "Unsupported file type. Select a TXT, PDF, or DOCX file.";
+    return "Unsupported file type. Select a TXT, Markdown, PDF, or DOCX file.";
   }
   if (file.size === 0) {
     return "The selected file is empty.";
@@ -153,21 +156,24 @@ function App() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [documentStatus, setDocumentStatus] = useState("idle");
-  const [documentInfo, setDocumentInfo] = useState(null);
+  const [activeDocuments, setActiveDocuments] = useState([]);
+  const [pendingDocuments, setPendingDocuments] = useState([]);
   const [documentError, setDocumentError] = useState("");
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
   const historyEndRef = useRef(null);
 
-  const isPreparingDocument = ["uploading", "indexing"].includes(documentStatus);
-  const activeDocument = documentStatus === "ready" ? documentInfo : null;
-  const activeModeLabel = activeDocument
-    ? `Document: ${activeDocument.filename}`
+  const isPreparingDocument = pendingDocuments.length > 0;
+  const hasActiveDocuments = activeDocuments.length > 0;
+  const totalChunks = activeDocuments.reduce(
+    (total, document) => total + document.chunk_count,
+    0,
+  );
+  const activeModeLabel = hasActiveDocuments
+    ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}`
     : "General Assistant";
-  const modeDescription = activeDocument
-    ? "Answers are grounded in the attached document."
+  const modeDescription = hasActiveDocuments
+    ? "Answers are grounded in the active uploaded documents."
     : "Ask directly or let the Agent use approved tools.";
 
   useEffect(() => {
@@ -202,9 +208,9 @@ function App() {
       return;
     }
 
-    const documentAtSendTime = activeDocument;
-    const modeLabel = documentAtSendTime
-      ? `Document: ${documentAtSendTime.filename}`
+    const documentsAtSendTime = [...activeDocuments];
+    const modeLabel = documentsAtSendTime.length
+      ? `Knowledge Base · ${documentsAtSendTime.length} ${documentsAtSendTime.length === 1 ? "document" : "documents"}`
       : "General Assistant";
     setMessages((current) => [
       ...current,
@@ -215,8 +221,11 @@ function App() {
     setIsLoading(true);
 
     try {
-      if (documentAtSendTime) {
-        const result = await askDocument(documentAtSendTime.document_id, message);
+      if (documentsAtSendTime.length) {
+        const result = await askDocuments(
+          documentsAtSendTime.map((document) => document.document_id),
+          message,
+        );
         setMessages((current) => [
           ...current,
           {
@@ -243,10 +252,10 @@ function App() {
       }
     } catch (caughtError) {
       setError(
-        documentAtSendTime
+        documentsAtSendTime.length
           ? friendlyDocumentError(
               caughtError,
-              "The document question failed. Check that the backend is running.",
+              "The knowledge-base question failed. Check that the backend is running.",
             )
           : "The assistant could not be reached. Check that the backend is running.",
       );
@@ -263,63 +272,88 @@ function App() {
     }
   }
 
-  async function prepareDocument(file) {
-    const previousDocument = activeDocument;
-    setSelectedFile(file);
-    setDocumentInfo(null);
+  function updatePendingDocument(key, updates) {
+    setPendingDocuments((current) => current.map((document) => (
+      document.key === key ? { ...document, ...updates } : document
+    )));
+  }
+
+  async function prepareDocuments(files) {
+    const queued = files.map((file, index) => ({
+      key: `${file.name}-${file.lastModified}-${index}`,
+      file,
+      filename: file.name,
+      status: "uploading",
+    }));
+    setPendingDocuments(queued);
     setDocumentError("");
     setError("");
-    setDocumentStatus("uploading");
-    try {
-      const uploaded = await uploadDocument(file);
-      setDocumentInfo(uploaded);
-      setDocumentStatus("indexing");
-      const indexed = await indexDocument(uploaded.document_id);
-      setDocumentInfo({ ...uploaded, ...indexed });
-      setDocumentStatus("ready");
-    } catch (caughtError) {
-      setDocumentInfo(previousDocument);
-      setSelectedFile(null);
-      setDocumentStatus(previousDocument ? "ready" : "error");
-      setDocumentError(
-        friendlyDocumentError(
-          caughtError,
-          "The document could not be prepared. Check that the backend is running.",
-        ),
-      );
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
+
+    const failures = [];
+    for (const pending of queued) {
+      try {
+        const uploaded = await uploadDocument(pending.file);
+        updatePendingDocument(pending.key, { status: "indexing" });
+        const indexed = await indexDocument(uploaded.document_id);
+        setActiveDocuments((current) => [
+          ...current,
+          { ...uploaded, ...indexed },
+        ]);
+      } catch (caughtError) {
+        failures.push(
+          `${pending.filename}: ${friendlyDocumentError(
+            caughtError,
+            "The document could not be prepared.",
+          )}`,
+        );
+      } finally {
+        setPendingDocuments((current) => (
+          current.filter((document) => document.key !== pending.key)
+        ));
       }
     }
-  }
 
-  function selectDocument(event) {
-    const file = event.target.files?.[0] ?? null;
-    const validationError = validateSelectedFile(file);
-    if (validationError) {
-      setSelectedFile(null);
-      if (!activeDocument) {
-        setDocumentInfo(null);
-        setDocumentStatus("error");
-      }
-      setDocumentError(validationError);
-      event.target.value = "";
-      return;
+    if (failures.length) {
+      setDocumentError(failures.join(" "));
     }
-    prepareDocument(file);
-  }
-
-  function detachDocument() {
-    if (isLoading || isPreparingDocument) {
-      return;
-    }
-    setSelectedFile(null);
-    setDocumentInfo(null);
-    setDocumentStatus("idle");
-    setDocumentError("");
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  }
+
+  function selectDocuments(event) {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) {
+      return;
+    }
+    const validationError = files
+      .map((file) => ({ file, error: validateSelectedFile(file) }))
+      .find((item) => item.error);
+    if (validationError) {
+      setDocumentError(`${validationError.file.name}: ${validationError.error}`);
+      event.target.value = "";
+      return;
+    }
+    prepareDocuments(files);
+  }
+
+  function detachDocument(documentId) {
+    if (isLoading || isPreparingDocument) {
+      return;
+    }
+    setActiveDocuments((current) => (
+      current.filter((document) => document.document_id !== documentId)
+    ));
+    setDocumentError("");
+    inputRef.current?.focus();
+  }
+
+  function detachAllDocuments() {
+    if (isLoading || isPreparingDocument) {
+      return;
+    }
+    setActiveDocuments([]);
+    setDocumentError("");
     inputRef.current?.focus();
   }
 
@@ -346,42 +380,43 @@ function App() {
 
         <section className="sidebar-section" aria-labelledby="mode-heading">
           <p className="sidebar-heading" id="mode-heading">Current mode</p>
-          <div className={`mode-card ${activeDocument ? "document" : "general"}`}>
+          <div className={`mode-card ${hasActiveDocuments ? "document" : "general"}`}>
             <span className="mode-icon">
-              <AppIcon name={activeDocument ? "document" : "chat"} size={20} />
+              <AppIcon name={hasActiveDocuments ? "document" : "chat"} size={20} />
             </span>
             <span>
-              <strong>{activeDocument ? "Document grounded" : "General Assistant"}</strong>
-              <small>{activeDocument ? "Isolated document RAG" : "Agent with approved tools"}</small>
+              <strong>{hasActiveDocuments ? "Knowledge Base" : "General Assistant"}</strong>
+              <small>{hasActiveDocuments ? `${activeDocuments.length} active · ${totalChunks} chunks` : "Agent with approved tools"}</small>
             </span>
           </div>
         </section>
 
         <section className="sidebar-section document-section" aria-labelledby="document-heading">
-          <p className="sidebar-heading" id="document-heading">Active document</p>
-          {documentStatus === "uploading" && (
-            <div className="document-card preparing" role="status">
-              <span className="file-tile"><AppIcon name="document" size={20} /></span>
-              <span><strong>{selectedFile?.name}</strong><small>Uploading...</small></span>
-            </div>
+          <p className="sidebar-heading" id="document-heading">Knowledge Base</p>
+          <div className="sidebar-document-list">
+            {pendingDocuments.map((document) => (
+              <div className="document-card preparing" role="status" key={document.key}>
+                <span className="file-tile"><AppIcon name="document" size={20} /></span>
+                <span><strong>{document.filename}</strong><small>{document.status === "uploading" ? "Uploading..." : "Extracting and indexing..."}</small></span>
+              </div>
+            ))}
+            {activeDocuments.map((document) => (
+              <div className="document-card ready" key={document.document_id}>
+                <span className="file-tile"><AppIcon name="document" size={20} /></span>
+                <span>
+                  <strong>{document.filename}</strong>
+                  <small><span className="status-dot" aria-hidden="true" />{document.chunk_count} chunks · Ready</small>
+                </span>
+              </div>
+            ))}
+          </div>
+          {hasActiveDocuments && (
+            <p className="knowledge-summary">
+              {activeDocuments.length} {activeDocuments.length === 1 ? "document" : "documents"} · {totalChunks} chunks · Ready
+            </p>
           )}
-          {documentStatus === "indexing" && (
-            <div className="document-card preparing" role="status">
-              <span className="file-tile"><AppIcon name="document" size={20} /></span>
-              <span><strong>{selectedFile?.name}</strong><small>Extracting and indexing...</small></span>
-            </div>
-          )}
-          {activeDocument && (
-            <div className="document-card ready">
-              <span className="file-tile"><AppIcon name="document" size={20} /></span>
-              <span>
-                <strong>{activeDocument.filename}</strong>
-                <small><span className="status-dot" aria-hidden="true" />Indexed · Ready</small>
-              </span>
-            </div>
-          )}
-          {!activeDocument && !isPreparingDocument && (
-            <p className="no-document">No document attached. General requests use the Agent.</p>
+          {!hasActiveDocuments && !isPreparingDocument && (
+            <p className="no-document">No uploaded knowledge attached. General requests use the Agent.</p>
           )}
         </section>
 
@@ -399,7 +434,7 @@ function App() {
           </div>
           <div className="mode-badge">
             <span className="status-dot" aria-hidden="true" />
-            {activeDocument ? "Document grounded" : "General Assistant"}
+            {hasActiveDocuments ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}` : "General Assistant"}
           </div>
         </header>
 
@@ -408,14 +443,14 @@ function App() {
             {messages.length === 0 && (
               <section className="welcome-state">
                 <div className="welcome-icon"><AppIcon name="spark" size={28} /></div>
-                <p className="eyebrow">{activeDocument ? "Document workspace" : "Knowledge workspace"}</p>
-                <h2>{activeDocument ? `Ask about ${activeDocument.filename}` : "What would you like to understand?"}</h2>
+                <p className="eyebrow">{hasActiveDocuments ? "Uploaded knowledge workspace" : "Knowledge workspace"}</p>
+                <h2>{hasActiveDocuments ? "Ask across your active documents" : "What would you like to understand?"}</h2>
                 <p>
-                  {activeDocument
-                    ? "Answers will use only the indexed content of your attached document."
-                    : "Explore the study knowledge base, use approved tools, or attach a document for isolated RAG."}
+                  {hasActiveDocuments
+                    ? `Answers will use only the ${activeDocuments.length} active uploaded ${activeDocuments.length === 1 ? "document" : "documents"}.`
+                    : "Explore the static study knowledge base, use approved tools, or attach documents for isolated RAG."}
                 </p>
-                {!activeDocument && !isPreparingDocument && (
+                {!hasActiveDocuments && !isPreparingDocument && (
                   <div className="example-grid" aria-label="Example prompts">
                     {EXAMPLE_PROMPTS.map((prompt) => (
                       <button
@@ -480,16 +515,33 @@ function App() {
             {error && <p className="error-message" role="alert">{error}</p>}
             {documentError && <p className="error-message" role="alert">{documentError}</p>}
 
-            {activeDocument && (
-              <div className="active-document-chip">
-                <span className="file-tile"><AppIcon name="document" size={18} /></span>
-                <span className="chip-copy">
-                  <strong>{activeDocument.filename}</strong>
-                  <small>{activeDocument.words} words · {activeDocument.chunk_count} chunks · Ready</small>
-                </span>
-                <button type="button" onClick={detachDocument} disabled={isLoading} aria-label={`Detach ${activeDocument.filename}`}>
-                  Detach
-                </button>
+            {hasActiveDocuments && (
+              <div className="active-knowledge-panel">
+                <div className="active-knowledge-heading">
+                  <span>
+                    <strong>Knowledge Base</strong>
+                    <small>{activeDocuments.length} {activeDocuments.length === 1 ? "document" : "documents"} · {totalChunks} chunks · Ready</small>
+                  </span>
+                  {activeDocuments.length > 1 && (
+                    <button type="button" onClick={detachAllDocuments} disabled={isLoading}>
+                      Detach all
+                    </button>
+                  )}
+                </div>
+                <div className="active-document-list">
+                  {activeDocuments.map((document) => (
+                    <div className="active-document-chip" key={document.document_id}>
+                      <span className="file-tile"><AppIcon name="document" size={18} /></span>
+                      <span className="chip-copy">
+                        <strong>{document.filename}</strong>
+                        <small>{document.words} words · {document.chunk_count} chunks</small>
+                      </span>
+                      <button type="button" onClick={() => detachDocument(document.document_id)} disabled={isLoading} aria-label={`Detach ${document.filename}`}>
+                        Detach
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -497,8 +549,8 @@ function App() {
               <div className="preparation-banner" role="status">
                 <span className="progress-ring" aria-hidden="true" />
                 <span>
-                  <strong>{documentStatus === "uploading" ? "Uploading document" : "Extracting and indexing"}</strong>
-                  <small>{selectedFile?.name}</small>
+                  <strong>Preparing uploaded knowledge</strong>
+                  <small>{pendingDocuments.map((document) => `${document.filename}: ${document.status}`).join(" · ")}</small>
                 </span>
               </div>
             )}
@@ -508,7 +560,7 @@ function App() {
               <label
                 className={`attach-button ${isLoading || isPreparingDocument ? "disabled" : ""}`}
                 htmlFor="document-file"
-                title="Attach a TXT, PDF, or DOCX document"
+                title="Attach TXT, Markdown, PDF, or DOCX documents"
               >
                 <AppIcon name="attach" size={20} />
                 <span className="sr-only">Attach document</span>
@@ -516,8 +568,9 @@ function App() {
                   id="document-file"
                   ref={fileInputRef}
                   type="file"
-                  accept=".txt,.pdf,.docx"
-                  onChange={selectDocument}
+                  accept=".txt,.md,.pdf,.docx"
+                  multiple
+                  onChange={selectDocuments}
                   disabled={isLoading || isPreparingDocument}
                 />
               </label>
@@ -527,7 +580,7 @@ function App() {
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={activeDocument ? `Ask about ${activeDocument.filename}...` : "Ask a question or request a tool..."}
+                placeholder={hasActiveDocuments ? "Ask across the active knowledge base..." : "Ask a question or request a tool..."}
                 rows="2"
                 disabled={isLoading || isPreparingDocument}
                 aria-describedby="composer-context"
@@ -542,7 +595,7 @@ function App() {
               </button>
             </form>
             <div className="composer-footer" id="composer-context">
-              <span><strong>{activeDocument ? "Document grounded" : "General Assistant"}</strong> · {modeDescription}</span>
+              <span><strong>{hasActiveDocuments ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}` : "General Assistant"}</strong> · {modeDescription}</span>
               <span>Enter to send · Shift+Enter for a new line</span>
             </div>
           </div>

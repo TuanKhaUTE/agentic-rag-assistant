@@ -10,6 +10,8 @@ from src.api.schemas import (
     ChatResponse,
     DocumentIndexResponse,
     DocumentMetadataResponse,
+    MultiDocumentQuestionRequest,
+    MultiDocumentQuestionResponse,
     DocumentQuestionRequest,
     DocumentQuestionResponse,
     DocumentUploadResponse,
@@ -25,7 +27,10 @@ from src.documents import (
     supported_extension,
 )
 from src.documents.indexer import DocumentIndexError, index_uploaded_document
-from src.documents.question_answering import answer_uploaded_document
+from src.documents.question_answering import (
+    answer_uploaded_document,
+    answer_uploaded_documents,
+)
 from src.documents.retriever import DocumentNotIndexedError
 from src.generator import GenerationConfigurationError
 
@@ -146,6 +151,70 @@ def index_document(document_id: str) -> DocumentIndexResponse:
     return DocumentIndexResponse(**metadata)
 
 
+def _retrieved_chunk_responses(
+    result: dict[str, object],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "rank": chunk["rank"],
+            "score": chunk["score"],
+            "similarity": chunk["similarity"],
+            "distance": chunk["distance"],
+            "chunk_id": chunk["chunk_id"],
+            "source": chunk["source"],
+            "document_id": chunk["document_id"],
+            "chunk_index": chunk["chunk_index"],
+        }
+        for chunk in result["top_results"]
+    ]
+
+
+@app.post(
+    "/documents/ask",
+    response_model=MultiDocumentQuestionResponse,
+)
+def ask_indexed_documents(
+    request: MultiDocumentQuestionRequest,
+) -> MultiDocumentQuestionResponse:
+    try:
+        result = answer_uploaded_documents(request.document_ids, request.question)
+    except DocumentNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DocumentNotIndexedError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except GenerationConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except DocumentIndexError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("Multi-document question failed: %s", type(error).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail="The document question could not be completed.",
+        ) from error
+
+    metadata = result["metadata"]
+    retrieved_chunks = _retrieved_chunk_responses(result)
+    return MultiDocumentQuestionResponse(
+        document_ids=[str(item["document_id"]) for item in metadata],
+        filenames=[str(item["filename"]) for item in metadata],
+        document_count=len(metadata),
+        answer=str(result["answer"]),
+        top_k=len(retrieved_chunks),
+        highest_similarity=float(result["highest_similarity"]),
+        similarity_threshold=float(result["similarity_threshold"]),
+        threshold_is_heuristic=True,
+        threshold_note=str(result["threshold_note"]),
+        retrieval_gate_passed=bool(result["retrieval_gate_passed"]),
+        sufficient_context=bool(result["sufficient_context"]),
+        generation_called=bool(result["generation_called"]),
+        answerable=bool(result["answerable"]),
+        retrieved_chunks=retrieved_chunks,
+    )
+
+
 @app.post(
     "/documents/{document_id}/ask",
     response_model=DocumentQuestionResponse,
@@ -172,19 +241,7 @@ def ask_indexed_document(
         ) from error
 
     metadata = result["metadata"]
-    retrieved_chunks = [
-        {
-            "rank": chunk["rank"],
-            "score": chunk["score"],
-            "similarity": chunk["similarity"],
-            "distance": chunk["distance"],
-            "chunk_id": chunk["chunk_id"],
-            "source": chunk["source"],
-            "document_id": chunk["document_id"],
-            "chunk_index": chunk["chunk_index"],
-        }
-        for chunk in result["top_results"]
-    ]
+    retrieved_chunks = _retrieved_chunk_responses(result)
     return DocumentQuestionResponse(
         document_id=document_id,
         filename=str(metadata["filename"]),

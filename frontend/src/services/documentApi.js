@@ -67,3 +67,19 @@ export async function askDocument(documentId, question) {
   }
   return response.json();
 }
+
+
+export async function askDocuments(documentIds, question) {
+  const response = await fetch(`${API_BASE_URL}/documents/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_ids: documentIds, question }),
+  });
+  if (!response.ok) {
+    throw await controlledError(
+      response,
+      "The knowledge-base question could not be completed.",
+    );
+  }
+  return response.json();
+}

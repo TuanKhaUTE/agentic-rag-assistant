@@ -111,7 +111,7 @@ def get_document_directory(document_id: str) -> Path:
 def get_original_file_path(document_id: str) -> Path:
     metadata = get_document_metadata(document_id)
     file_type = str(metadata.get("file_type", ""))
-    if file_type not in {"txt", "pdf", "docx"}:
+    if file_type not in {"txt", "md", "pdf", "docx"}:
         raise DocumentNotFoundError("Stored document type is invalid.")
 
     original_path = get_document_directory(document_id) / f"original.{file_type}"

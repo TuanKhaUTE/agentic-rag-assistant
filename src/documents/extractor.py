@@ -7,7 +7,7 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 
-SUPPORTED_EXTENSIONS = {".txt", ".pdf", ".docx"}
+SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
 
 
 class DocumentExtractionError(ValueError):
@@ -28,15 +28,28 @@ def supported_extension(filename: str) -> str:
     return extension
 
 
-def extract_txt_text(file_path: Path) -> str:
+def _extract_utf8_text(file_path: Path, file_type: str) -> str:
     try:
         text = file_path.read_text(encoding="utf-8")
     except UnicodeDecodeError as error:
-        raise DocumentExtractionError("TXT files must use UTF-8 encoding.") from error
+        raise DocumentExtractionError(
+            f"{file_type} files must use UTF-8 encoding."
+        ) from error
 
     if not text.strip():
-        raise DocumentExtractionError("No extractable text was found in the TXT file.")
+        raise DocumentExtractionError(
+            f"No extractable text was found in the {file_type} file."
+        )
     return text
+
+
+def extract_txt_text(file_path: Path) -> str:
+    return _extract_utf8_text(file_path, "TXT")
+
+
+def extract_markdown_text(file_path: Path) -> str:
+    """Treat Markdown as UTF-8 plain text; no Markdown parser is needed."""
+    return _extract_utf8_text(file_path, "Markdown")
 
 
 def extract_pdf_text(file_path: Path) -> str:
@@ -76,6 +89,7 @@ def extract_text(file_path: Path | str) -> str:
 
     extractors = {
         ".txt": extract_txt_text,
+        ".md": extract_markdown_text,
         ".pdf": extract_pdf_text,
         ".docx": extract_docx_text,
     }

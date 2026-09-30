@@ -1,7 +1,10 @@
 from typing import Any
 
 from config import MIN_SIMILARITY, TOP_K
-from src.documents.retriever import retrieve_uploaded_document
+from src.documents.retriever import (
+    retrieve_uploaded_document,
+    retrieve_uploaded_documents,
+)
 from src.generator import generate_answer
 from src.prompt_builder import (
     INSUFFICIENT_INFORMATION_MESSAGE,
@@ -22,6 +25,22 @@ def answer_uploaded_document(
     top_k: int = TOP_K,
 ) -> dict[str, Any]:
     retrieval = retrieve_uploaded_document(document_id, question, top_k=top_k)
+    return _answer_from_retrieval(question, retrieval)
+
+
+def answer_uploaded_documents(
+    document_ids: list[str],
+    question: str,
+    top_k: int = TOP_K,
+) -> dict[str, Any]:
+    retrieval = retrieve_uploaded_documents(document_ids, question, top_k=top_k)
+    return _answer_from_retrieval(question, retrieval)
+
+
+def _answer_from_retrieval(
+    question: str,
+    retrieval: dict[str, Any],
+) -> dict[str, Any]:
     top_results = retrieval["top_results"]
     highest_similarity = float(top_results[0]["score"])
     retrieval_gate_passed = highest_similarity >= MIN_SIMILARITY

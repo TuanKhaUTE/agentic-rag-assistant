@@ -150,6 +150,26 @@ def query_chroma_collection(
     where: dict[str, object] | None = None,
 ) -> tuple[np.ndarray, list[dict[str, object]]]:
     """Embed a question and ask Chroma for its cosine Top-K chunks."""
+    metadata = collection.metadata or {}
+    expected_dimension = int(metadata.get("embedding_dimension", 0))
+    if expected_dimension <= 0:
+        raise ValueError("The Chroma index has no valid embedding dimension.")
+    query_vector = embed_query(query, expected_dimension)
+    return query_chroma_collection_with_vector(
+        collection,
+        query_vector,
+        top_k=top_k,
+        where=where,
+    )
+
+
+def query_chroma_collection_with_vector(
+    collection: Any,
+    query_vector: np.ndarray,
+    top_k: int = TOP_K,
+    where: dict[str, object] | None = None,
+) -> tuple[np.ndarray, list[dict[str, object]]]:
+    """Query Chroma with one already embedded and normalized question vector."""
     if not isinstance(top_k, int) or isinstance(top_k, bool):
         raise TypeError("top_k must be an integer.")
     if top_k <= 0:
@@ -159,7 +179,15 @@ def query_chroma_collection(
     expected_dimension = int(metadata.get("embedding_dimension", 0))
     if expected_dimension <= 0:
         raise ValueError("The Chroma index has no valid embedding dimension.")
-    query_vector = embed_query(query, expected_dimension)
+    query_vector = np.asarray(query_vector, dtype=np.float32)
+    if query_vector.ndim != 1 or query_vector.shape[0] != expected_dimension:
+        raise ValueError(
+            "Query vector dimension does not match the Chroma collection."
+        )
+    if not np.isfinite(query_vector).all():
+        raise ValueError("Query vector contains non-finite values.")
+    if not np.isclose(np.linalg.norm(query_vector), 1.0, atol=1e-5):
+        raise ValueError("Query vector must be L2-normalized.")
 
     query_arguments: dict[str, object] = {
         "query_embeddings": [query_vector.tolist()],

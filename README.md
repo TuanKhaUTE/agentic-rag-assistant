@@ -31,13 +31,14 @@ Phase 2C adds evaluation and final lecturer-facing documentation without
 changing the Agent architecture.
 Slice 1 adds a minimal local FastAPI wrapper that reuses the existing Agent.
 Slice 2 adds a temporary in-browser React chat history that calls only that API.
-Slice 3A accepts local TXT, text-based PDF, and DOCX uploads, extracts their
+Slice 3A accepts local TXT, Markdown, text-based PDF, and DOCX uploads, extracts their
 text, and stores safe metadata.
 Slice 3B can turn one uploaded document into a separate local chunk and vector
 index. Slice 3C can query exactly one indexed upload through its own API and
 CLI path. Slice 3D exposes upload, indexing, and questions in the React UI. The
-final cleanup presents one conversation: without an active document, messages
-use `/chat`; with an active document, messages use its isolated RAG endpoint.
+final interface supports one or more active uploaded documents: without active
+uploads, messages use `/chat`; with uploads, messages use the isolated
+multi-document RAG endpoint.
 
 ## Project layout
 
@@ -61,7 +62,7 @@ run_api.py             Starts the local FastAPI development server
 src/api/               Request/response schemas and HTTP endpoints
 frontend/              Minimal React and Vite chat interface
 uploads/               Ignored local document storage, organized by document ID
-src/documents/          Upload storage and TXT/PDF/DOCX text extraction
+src/documents/          Upload storage and TXT/MD/PDF/DOCX text extraction
 inspect_document.py    Inspects extraction from one local document
 inspect_uploaded_index.py  Inspects one uploaded document's chunks and vectors
 ask_document.py        Runs visible retrieval and grounded QA for one upload
@@ -169,17 +170,16 @@ npm run dev
 ```
 
 Open `http://localhost:5173`. The page has one conversation and one composer.
-Without an attached document, Send calls `/chat` and uses the Agent, approved
-tools, and static study knowledge. When one TXT, PDF, or DOCX document is ready,
-Send calls `/documents/{document_id}/ask` and uses only that document's isolated
-index. Detaching clears only the React state and routes later messages back to
-`/chat`; it does not delete the server-side upload. Every stored message retains
-a General Assistant or document filename label so mode changes remain visible.
+Without active uploaded documents, Send calls `/chat` and uses the Agent,
+approved tools, and the static sample study knowledge. When one or more TXT,
+Markdown, PDF, or DOCX files are ready, Send calls `/documents/ask` with their
+document IDs and searches only those isolated uploaded indexes. Detaching one
+file removes its ID from later requests without deleting its server-side index;
+detaching all files routes later messages back to `/chat`.
 
 The browser calls only FastAPI and never calls Ollama or Gemini directly. Chat
-messages,
-the selected document, and document answers exist only in React state and are
-cleared when the page is refreshed.
+messages, active uploaded documents, and document answers exist only in React
+state and are cleared when the page is refreshed.
 
 ## Final web architecture
 
@@ -187,27 +187,28 @@ Route selection and general chat:
 
 ```text
 React Send
-├── no active document → POST /chat → Agent → tools / static RAG / Qwen
-└── active document    → POST /documents/{document_id}/ask
+├── no active uploads → POST /chat → Agent → tools / static sample RAG / Qwen
+└── active uploads    → POST /documents/ask → uploaded-document RAG
 ```
 
 Uploaded-document preparation:
 
 ```text
-React file selection
-→ POST /documents/upload
+React multi-file selection
+→ for each file: POST /documents/upload
 → safe storage and text extraction
-→ POST /documents/{document_id}/index
-→ chunking + embeddings + isolated document index
+→ for each document ID: POST /documents/{document_id}/index
+→ chunking + embeddings + one isolated Chroma index per document
 ```
 
 Uploaded-document questions:
 
 ```text
 React question
-→ POST /documents/{document_id}/ask
-→ query embedding
-→ cosine Top-K from that document only
+→ POST /documents/ask with the active document IDs
+→ one query embedding
+→ up to Top-K candidates from each selected document index
+→ merge by cosine similarity and keep one global Top-K
 → labelled context
 → configured RAG generation provider (Ollama/Qwen or Gemini)
 → grounded answer plus retrieval metadata
@@ -270,8 +271,8 @@ After indexing completes, ask in the browser:
 When is the Aurora Lab review meeting?
 ```
 
-The request must be in active-document mode so it uses
-`/documents/{document_id}/ask`. General `/chat` remains the Ollama Agent.
+The request must be in uploaded Knowledge Base mode so it uses
+`/documents/ask`. General `/chat` remains the Ollama Agent.
 
 To return to local generation, stop and restart the backend after running:
 
@@ -305,7 +306,7 @@ Inspect extraction without uploading:
 python inspect_document.py ".\notes.docx"
 ```
 
-Uploads are limited to 10 MB. TXT files must be UTF-8. PDF extraction supports
+Uploads are limited to 10 MB. TXT and Markdown files must be UTF-8. PDF extraction supports
 normal text-based PDFs only; scanned image PDFs require OCR, which is not part
 of this slice. The API returns at most a 500-character preview and never returns
 the complete extracted document text.
@@ -333,6 +334,23 @@ Invoke-RestMethod -Method Post `
 
 python ask_document.py "<document_id>" "What is the main topic?"
 ```
+
+Ask across a selected set of indexed uploads:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/documents/ask" `
+  -ContentType "application/json" `
+  -Body (@{
+    document_ids = @("<first_document_id>", "<second_document_id>")
+    question = "What do these documents say about security?"
+  } | ConvertTo-Json)
+```
+
+The backend embeds the question once, queries each selected document's separate
+Chroma collection, merges those candidates by cosine similarity, and sends only
+the final global `TOP_K` chunks to the grounded generator. The static sample
+collection in `storage/chroma/` is never included in uploaded-document retrieval.
 
 The endpoint loads only the Chroma index belonging to the supplied document ID.
 It embeds the question with `all-minilm:latest`, asks Chroma for that document's
@@ -392,7 +410,7 @@ FastAPI file uploads. No OCR library is included.
 - `config.py` selects `all-minilm:latest`, `TOP_K`, the 180/30 word chunk
   settings, and both local Chroma collection names.
 - `src/document_loader.py` loads the static text files;
-  `src/documents/extractor.py` extracts uploaded TXT, PDF, and DOCX text.
+  `src/documents/extractor.py` extracts uploaded TXT, Markdown, PDF, and DOCX text.
 - `src/chunker.py` creates overlapping chunks and deterministic chunk IDs.
 - `src/embedder.py` contains the exact `ollama.embed(...)` call and L2
   normalization.
@@ -416,8 +434,8 @@ after a passed gate, the grounded model can still refuse an unsupported answer.
 ## Known Limitations
 
 - Uploaded-document questions remain separate from the Agent and static `/chat` knowledge path.
-- The browser holds only one current uploaded document and loses that selection when refreshed.
-- Each uploaded document has its own index; combined document retrieval is not implemented.
+- The browser loses its active uploaded-document selection when refreshed.
+- Each uploaded document has its own index; cross-document retrieval merges candidates at request time rather than creating a combined persistent index.
 - The knowledge base contains only five small documents.
 - Chunking uses word counts rather than semantic or token-aware boundaries.
 - `all-minilm` can miss nuance or rank generally related text above the best passage.

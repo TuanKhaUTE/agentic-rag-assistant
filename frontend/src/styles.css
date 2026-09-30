@@ -266,6 +266,12 @@ button:disabled {
   min-height: 104px;
 }
 
+.sidebar-document-list {
+  display: grid;
+  max-height: 230px;
+  overflow-y: auto;
+}
+
 .document-card {
   padding: 11px 0;
 }
@@ -298,6 +304,14 @@ button:disabled {
   color: #9fb2ad;
   font-size: 0.77rem;
   line-height: 1.55;
+}
+
+.knowledge-summary {
+  margin: 8px 0 0;
+  color: #c6d9d3;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .runtime-list {
@@ -757,6 +771,22 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+.source-list span b,
+.source-list span small {
+  display: block;
+}
+
+.source-list span b {
+  margin-bottom: 2px;
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.7rem;
+}
+
+.source-list span small {
+  font: inherit;
+}
+
 .source-list strong {
   color: var(--forest-700);
   font-family: inherit;
@@ -825,6 +855,62 @@ h1 {
   border: 1px solid #cfe0d7;
   border-radius: 12px;
   background: var(--forest-50);
+}
+
+.active-knowledge-panel {
+  max-width: 100%;
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid #cfe0d7;
+  border-radius: 14px;
+  background: var(--forest-50);
+}
+
+.active-knowledge-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.active-knowledge-heading strong,
+.active-knowledge-heading small {
+  display: block;
+}
+
+.active-knowledge-heading strong {
+  color: var(--ink);
+  font-size: 0.76rem;
+}
+
+.active-knowledge-heading small {
+  margin-top: 2px;
+  color: var(--ink-muted);
+  font-size: 0.66rem;
+}
+
+.active-knowledge-heading button {
+  border: 0;
+  color: var(--forest-700);
+  background: transparent;
+  font-size: 0.68rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.active-document-list {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+}
+
+.active-document-list .active-document-chip {
+  flex: 0 0 auto;
+  margin: 0;
+  border-color: #d9e5df;
+  background: rgb(255 255 255 / 70%);
 }
 
 .active-document-chip .file-tile {
@@ -1227,6 +1313,10 @@ h1 {
   .active-document-chip,
   .preparation-banner {
     width: 100%;
+  }
+
+  .active-document-list {
+    display: grid;
   }
 
   .composer {
