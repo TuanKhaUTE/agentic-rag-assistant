@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Slice 3C uploaded-document question answering
+## Current scope: Slice 3D complete local web application
 
 The project currently implements:
 
@@ -33,8 +33,8 @@ Slice 3A accepts local TXT, text-based PDF, and DOCX uploads, extracts their
 text, and stores safe metadata.
 Slice 3B can turn one uploaded document into a separate local chunk and vector
 index. Slice 3C can query exactly one indexed upload through its own API and
-CLI path. Uploaded-document questions are intentionally not connected to the
-Agent, the static `/chat` endpoint, or the React UI.
+CLI path. Slice 3D exposes that separate upload, indexing, and question path in
+the React UI without changing the Agent or the static `/chat` behavior.
 
 ## Project layout
 
@@ -165,9 +165,50 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The browser sends messages only to FastAPI at
-`http://127.0.0.1:8000/chat`; it never calls Ollama directly. Message history
-exists only in React state and is cleared when the page is refreshed.
+Open `http://localhost:5173`. The page provides two clearly separated paths:
+
+- **General Assistant** calls `/chat` and uses the Agent, approved tools, and
+  static study knowledge.
+- **Uploaded Document Q&A** uploads one TXT, PDF, or DOCX file, indexes it, and
+  asks questions through the document-specific endpoints.
+
+The browser calls only FastAPI and never calls Ollama directly. Chat messages,
+the selected document, and document answers exist only in React state and are
+cleared when the page is refreshed.
+
+## Final web architecture
+
+General chat:
+
+```text
+React
+→ POST /chat
+→ Agent
+→ approved tools / static RAG / Qwen
+→ answer plus Agent metadata
+```
+
+Uploaded-document preparation:
+
+```text
+React file selection
+→ POST /documents/upload
+→ safe storage and text extraction
+→ POST /documents/{document_id}/index
+→ chunking + embeddings + isolated document index
+```
+
+Uploaded-document questions:
+
+```text
+React question
+→ POST /documents/{document_id}/ask
+→ query embedding
+→ cosine Top-K from that document only
+→ labelled context
+→ Qwen
+→ grounded answer plus retrieval metadata
+```
 
 ## Upload and inspect documents
 
@@ -258,7 +299,8 @@ FastAPI file uploads. No OCR library is included.
 
 ## Known Limitations
 
-- Uploaded-document indexes can be queried one at a time, but are not connected to the Agent, static `/chat`, or React UI.
+- Uploaded-document questions remain separate from the Agent and static `/chat` knowledge path.
+- The browser holds only one current uploaded document and loses that selection when refreshed.
 - Each uploaded document has its own index; combined document retrieval is not implemented.
 - The knowledge base contains only five small documents.
 - Chunking uses word counts rather than semantic or token-aware boundaries.
