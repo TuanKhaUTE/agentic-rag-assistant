@@ -17,8 +17,8 @@ DEFAULT_QUESTION = (
 def main() -> None:
     question = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else DEFAULT_QUESTION
 
-    # search() visibly performs index loading, query embedding, and cosine scoring.
-    _, _, top_results = search(question, top_k=TOP_K)
+    # search() embeds the query and asks Chroma for its cosine Top-K records.
+    _, top_results = search(question, top_k=TOP_K)
 
     print("=== QUESTION ===")
     print(question)
@@ -27,6 +27,7 @@ def main() -> None:
     for result in top_results:
         print(f"Rank: {result['rank']}")
         print(f"Similarity score: {result['score']:.6f}")
+        print(f"Cosine distance: {result['distance']:.6f}")
         print(f"Chunk ID: {result['chunk_id']}")
         print(f"Source: {result['source']}")
         print()

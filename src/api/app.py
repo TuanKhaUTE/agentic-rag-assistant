@@ -173,8 +173,12 @@ def ask_indexed_document(
         {
             "rank": chunk["rank"],
             "score": chunk["score"],
+            "similarity": chunk["similarity"],
+            "distance": chunk["distance"],
             "chunk_id": chunk["chunk_id"],
             "source": chunk["source"],
+            "document_id": chunk["document_id"],
+            "chunk_index": chunk["chunk_index"],
         }
         for chunk in result["top_results"]
     ]

@@ -3,7 +3,7 @@ import sys
 import numpy as np
 
 from config import EMBEDDING_MODEL, TOP_K
-from src.vector_store import search
+from src.vector_store import load_static_collection, query_chroma_collection
 
 
 DEFAULT_QUESTION = (
@@ -13,7 +13,11 @@ DEFAULT_QUESTION = (
 
 def main() -> None:
     question = " ".join(sys.argv[1:]).strip() if len(sys.argv) > 1 else DEFAULT_QUESTION
-    query_vector, all_results, top_results = search(question, top_k=TOP_K)
+    collection = load_static_collection()
+    query_vector, all_results = query_chroma_collection(
+        collection, question, top_k=collection.count()
+    )
+    top_results = all_results[:TOP_K]
 
     print("=== QUESTION ===")
     print(question)
@@ -32,10 +36,11 @@ def main() -> None:
     )
     print(f"Vector norm: {np.linalg.norm(query_vector):.6f}")
 
-    print("\n=== ALL SIMILARITY SCORES ===")
+    print("\n=== ALL CHROMA SCORES ===")
     for result in all_results:
         print(
-            f"{result['score']:.6f} | "
+            f"similarity={result['similarity']:.6f} | "
+            f"distance={result['distance']:.6f} | "
             f"{result['chunk_id']} | {result['source']}"
         )
 
@@ -44,6 +49,7 @@ def main() -> None:
         print("\n" + "-" * 80)
         print(f"Rank: {result['rank']}")
         print(f"Similarity score: {result['score']:.6f}")
+        print(f"Cosine distance: {result['distance']:.6f}")
         print(f"Chunk ID: {result['chunk_id']}")
         print(f"Source: {result['source']}")
         print(f"Word range: [{result['start_word']}, {result['end_word']})")
@@ -59,6 +65,7 @@ def main() -> None:
 
     print("\n=== WHAT THIS OUTPUT MEANS ===")
     print("Higher cosine similarity means closer semantic meaning.")
+    print("Chroma returns cosine distance; similarity is calculated as 1 - distance.")
     print(f"Top-K means the {TOP_K} most similar chunks.")
     print("Retrieval has selected text, but it has not generated an answer yet.")
 

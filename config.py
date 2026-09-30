@@ -4,8 +4,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 KNOWLEDGE_DIR = PROJECT_ROOT / "knowledge"
 STORAGE_DIR = PROJECT_ROOT / "storage"
-CHUNKS_PATH = STORAGE_DIR / "chunks.json"
-EMBEDDINGS_PATH = STORAGE_DIR / "embeddings.npy"
+CHROMA_DIR = STORAGE_DIR / "chroma"
+STATIC_CHROMA_COLLECTION = "static_knowledge"
+UPLOADED_CHROMA_COLLECTION = "uploaded_document"
 UPLOADS_DIR = PROJECT_ROOT / "uploads"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 TEXT_PREVIEW_CHARACTERS = 500

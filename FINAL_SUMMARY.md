@@ -8,8 +8,8 @@
 documents
 → chunks
 → all-minilm embeddings
-→ normalized NumPy vectors
-→ cosine similarity
+→ normalized vectors stored in local Chroma
+→ Chroma cosine retrieval
 → Top-K retrieval
 → relevance threshold
 → labelled context
@@ -17,8 +17,9 @@ documents
 ```
 
 The RAG system loads five local study documents, creates overlapping chunks,
-and stores one 384-dimensional vector per chunk. A question is embedded with
-the same model and compared with every stored vector. Low-relevance questions
+and stores one 384-dimensional vector per chunk in a persistent local Chroma
+collection. A question is embedded with the same model and sent to Chroma for
+Top-K cosine retrieval. Low-relevance questions
 are rejected before generation; relevant chunks become labelled prompt context.
 
 ### Part 2: Controlled Agent
@@ -85,7 +86,7 @@ capabilities are **not implemented in this homework**.
 - There is no internet access.
 - Vector retrieval can rank a generally related chunk above the best passage.
 - Agent behavior is probabilistic, so repeated runs may differ.
-- There is no reranker, vector database, or automatic factual verification.
+- There is no reranker, hosted vector service, or automatic factual verification.
 
 ## Recommended Lecturer Demo
 

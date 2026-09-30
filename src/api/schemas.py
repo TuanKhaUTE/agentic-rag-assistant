@@ -45,8 +45,12 @@ class DocumentQuestionRequest(BaseModel):
 class RetrievedDocumentChunkResponse(BaseModel):
     rank: int
     score: float
+    similarity: float
+    distance: float
     chunk_id: str
     source: str
+    document_id: str
+    chunk_index: int
 
 
 class DocumentQuestionResponse(BaseModel):

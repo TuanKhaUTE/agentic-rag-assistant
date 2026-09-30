@@ -14,8 +14,7 @@ from src.prompt_builder import (
     INSUFFICIENT_INFORMATION_MESSAGE,
     build_grounded_prompt,
 )
-from src.vector_store import load_index
-from src.vector_store import search
+from src.vector_store import get_collection_records, load_static_collection, search
 
 
 TEST_QUESTIONS_PATH = PROJECT_ROOT / "tests" / "test_questions.json"
@@ -33,7 +32,7 @@ def collect_retrieval_results(
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for test in tests:
-        _, _, top_results = search(str(test["question"]), top_k=TOP_K)
+        _, top_results = search(str(test["question"]), top_k=TOP_K)
         top_sources = [str(result["source"]) for result in top_results]
         expected_source = test["expected_source"]
         expected_in_top_k = (
@@ -272,7 +271,8 @@ def print_final_evaluation_table(rows: list[dict[str, object]]) -> None:
 
 
 def print_pipeline_summary(rows: list[dict[str, object]]) -> None:
-    chunks, embeddings = load_index()
+    collection = load_static_collection()
+    chunks = get_collection_records(collection)
     document_count = len({str(chunk["source"]) for chunk in chunks})
     answerable_rows = [row for row in rows if row["type"] == "answerable"]
     unanswerable_rows = [row for row in rows if row["type"] == "unanswerable"]
@@ -281,8 +281,8 @@ def print_pipeline_summary(rows: list[dict[str, object]]) -> None:
     print(f"Documents: {document_count}")
     print(f"Chunks: {len(chunks)}")
     print(f"Embedding model: {EMBEDDING_MODEL}")
-    print(f"Embedding dimension: {embeddings.shape[1]}")
-    print("Retrieval: NumPy cosine similarity via normalized dot product")
+    print(f"Embedding dimension: {collection.metadata['embedding_dimension']}")
+    print("Retrieval: Chroma cosine distance; similarity = 1 - distance")
     print(f"Top-K: {TOP_K}")
     print(f"Generation model: {GENERATION_MODEL}")
     print(f"Similarity threshold: {MIN_SIMILARITY:.2f} (heuristic)")

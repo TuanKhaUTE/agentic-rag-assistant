@@ -1,36 +1,30 @@
-import json
-
 import numpy as np
 
-from config import CHUNKS_PATH, EMBEDDING_MODEL, EMBEDDINGS_PATH
+from config import EMBEDDING_MODEL
+from src.vector_store import get_collection_records, load_static_collection
 
 
 def main() -> None:
-    chunks = json.loads(CHUNKS_PATH.read_text(encoding="utf-8"))
-    embeddings = np.load(EMBEDDINGS_PATH, allow_pickle=False)
+    collection = load_static_collection()
+    chunks = get_collection_records(collection, include_embeddings=True)
+    embeddings = np.vstack([chunk["embedding"] for chunk in chunks])
 
-    if not isinstance(chunks, list):
-        raise ValueError("chunks.json must contain a list")
-    if embeddings.ndim != 2:
-        raise ValueError(f"Expected a 2D matrix, received shape {embeddings.shape}")
-    if embeddings.dtype != np.float32:
-        raise ValueError(f"Expected float32 vectors, received {embeddings.dtype}")
-
-    print("=== EMBEDDING INSPECTION ===")
+    print("=== CHROMA INDEX INSPECTION ===")
     print(f"Embedding model: {EMBEDDING_MODEL}")
+    print(f"Chroma collection: {collection.name}")
     print(f"Number of chunks: {len(chunks)}")
     print(f"Embedding dimension: {embeddings.shape[1]}")
-    print(f"Matrix shape: {embeddings.shape}")
+    print(f"Stored vector shape: {embeddings.shape}")
     print(f"Data type: {embeddings.dtype}")
     print()
-    print(f"chunks count: {len(chunks)}")
-    print(f"embedding matrix row count: {embeddings.shape[0]}")
+    print(f"Stored chunk count: {len(chunks)}")
+    print(f"Stored embedding count: {embeddings.shape[0]}")
 
     if len(chunks) != embeddings.shape[0]:
         raise ValueError(
-            "FAIL: chunk count does not match embedding matrix row count"
+            "FAIL: Chroma chunk count does not match embedding count"
         )
-    print("PASS: one embedding row corresponds to one chunk")
+    print("PASS: one Chroma embedding corresponds to one chunk")
 
     for index, (chunk, vector) in enumerate(
         zip(chunks[:3], embeddings[:3]),

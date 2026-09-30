@@ -1,19 +1,17 @@
-import json
-
 import numpy as np
 
 from config import (
     CHUNK_OVERLAP_WORDS,
     CHUNK_SIZE_WORDS,
-    CHUNKS_PATH,
+    CHROMA_DIR,
     EMBEDDING_MODEL,
-    EMBEDDINGS_PATH,
     KNOWLEDGE_DIR,
-    STORAGE_DIR,
+    STATIC_CHROMA_COLLECTION,
 )
 from src.chunker import chunk_documents
 from src.document_loader import load_documents
 from src.embedder import embed_texts, normalize_embeddings
+from src.vector_store import rebuild_chroma_collection
 
 
 def main() -> None:
@@ -57,29 +55,22 @@ def main() -> None:
         f"{normalized_lengths.min():.6f} to {normalized_lengths.max():.6f}"
     )
 
-    print("6. Saving chunk metadata and vector matrix...")
-    metadata_fields = (
-        "chunk_id",
-        "source",
-        "chunk_index",
-        "text",
-        "start_word",
-        "end_word",
+    print("6. Rebuilding the persistent Chroma collection...")
+    collection = rebuild_chroma_collection(
+        CHROMA_DIR,
+        STATIC_CHROMA_COLLECTION,
+        chunks,
+        normalized_embeddings,
+        {"index_kind": "static_knowledge"},
     )
-    chunk_metadata = [
-        {field: chunk[field] for field in metadata_fields}
-        for chunk in chunks
-    ]
-
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    CHUNKS_PATH.write_text(
-        json.dumps(chunk_metadata, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    np.save(EMBEDDINGS_PATH, normalized_embeddings, allow_pickle=False)
-
-    print(f"   Saved metadata: {CHUNKS_PATH}")
-    print(f"   Saved vectors:  {EMBEDDINGS_PATH}")
+    print(f"   Document directory: {KNOWLEDGE_DIR}")
+    print(f"   Embedding model: {EMBEDDING_MODEL}")
+    print(f"   Chunk count: {collection.count()}")
+    print(f"   Chroma collection: {collection.name}")
+    print(f"   Local Chroma persistence: {CHROMA_DIR}")
+    print("   Stored chunk IDs:")
+    for chunk_id in collection.get(include=[])["ids"]:
+        print(f"     - {chunk_id}")
     print("=== INDEX BUILD COMPLETE ===")
 
 

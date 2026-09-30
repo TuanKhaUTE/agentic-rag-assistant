@@ -13,17 +13,18 @@ The project currently implements:
 - splitting documents into overlapping word chunks;
 - preserving source and word-position metadata; and
 - converting chunk text into 384-dimensional embeddings with Ollama;
-- L2-normalizing and saving the embedding matrix; and
-- saving chunk metadata in exactly the same row order;
+- L2-normalizing embeddings and storing them with chunk records in local Chroma;
 - embedding and normalizing a user question; and
-- ranking all chunks with an explicit NumPy dot product;
+- querying a cosine-distance Chroma collection for Top-K chunks;
 - constructing labelled context from the raw Top-3 chunks; and
 - generating a grounded, source-cited answer with local Qwen;
 - applying a calibrated pre-generation relevance threshold; and
 - evaluating answerable and unanswerable questions.
 
-Reranking, vector databases, and hybrid search are intentionally not part of
-Phase 1. Phase 2B adds a visible, bounded native tool-calling loop around the
+Reranking and hybrid search are intentionally not part of this project. The
+first educational implementation exposed cosine similarity with NumPy; the
+final exam-facing implementation uses Chroma as its local vector database.
+Phase 2B adds a visible, bounded native tool-calling loop around the
 four Phase 2A tools. It has no shell, file-writing, or external-network tool.
 Phase 2C adds evaluation and final lecturer-facing documentation without
 changing the Agent architecture.
@@ -41,13 +42,13 @@ use `/chat`; with an active document, messages use its isolated RAG endpoint.
 
 ```text
 knowledge/          Small source documents used by the study assistant
-storage/            Generated index data in later phases
+storage/chroma/     Ignored local Chroma database for the static knowledge base
 src/                Explicit RAG building blocks
 tests/              Tests added as the project grows
 config.py           Shared paths and chunk settings
 inspect_chunks.py   Phase 1A inspection entry point
-build_index.py      Builds and saves the Phase 1B embedding index
-inspect_embeddings.py  Inspects saved vectors without performing retrieval
+build_index.py      Rebuilds the static local Chroma index
+inspect_embeddings.py  Inspects embeddings stored in the Chroma collection
 inspect_retrieval.py   Prints every score and the complete Top-K chunks
 ask.py                 Runs the visible thresholded RAG pipeline
 evaluate_rag.py        Runs the seven-question Phase 1E evaluation
@@ -262,9 +263,9 @@ Invoke-RestMethod -Method Post `
 python ask_document.py "<document_id>" "What is the main topic?"
 ```
 
-The endpoint loads only the index belonging to the supplied document ID. It
-embeds the question with `all-minilm:latest`, ranks that document's normalized
-vectors with a NumPy dot product, and sends labelled Top-3 context to Qwen only
+The endpoint loads only the Chroma index belonging to the supplied document ID.
+It embeds the question with `all-minilm:latest`, asks Chroma for that document's
+cosine Top-3, and sends labelled context to Qwen only
 when the highest score reaches `MIN_SIMILARITY`. The `0.30` cutoff is an
 educational heuristic calibrated on the static homework corpus, not a universal
 confidence score; different uploaded-document collections may require new
@@ -281,11 +282,12 @@ Uploaded-document answerability has two visible checks:
 The legacy `sufficient_context` response field remains as a compatibility alias
 for `retrieval_gate_passed`; it does not claim that Qwen found an answer.
 
-Each index is stored separately under
-`uploads/<document_id>/index/` as `chunks.json` and `embeddings.npy`. Repeating
-the indexing request rebuilds a temporary complete index and replaces the one
-canonical `index/` directory, so chunks are never appended or duplicated. The
-static homework index under `storage/` is not modified.
+Each uploaded index is stored separately under
+`uploads/<document_id>/chroma/`. Repeating the indexing request deletes and
+recreates that document's one deterministic Chroma collection, so chunks are
+never appended or duplicated. The static collection under `storage/chroma/`
+is not modified. Uploaded retrieval also applies a `document_id` metadata
+filter as a second isolation check.
 
 The script prints each document's path, title, and word count. It then prints
 every chunk, its ID, its 0-based end-exclusive word range, its overlap with the
@@ -302,11 +304,38 @@ For example, the first two full chunks use word ranges `[0, 180)` and
 
 ## Dependencies
 
-Document loading and chunking use only the Python standard library. Phase 1B
-uses NumPy for the vector matrix and the official Ollama Python client to call
-the local `all-minilm:latest` embedding model. Slice 3A uses `pypdf` for
+Document loading and chunking use only the Python standard library. The
+official Ollama Python client calls local `all-minilm:latest`; NumPy performs
+L2 normalization before the vectors are supplied explicitly to local Chroma.
+Chroma stores and queries those vectors and does not select an embedding model.
+Slice 3A uses `pypdf` for
 text-based PDFs, `python-docx` for DOCX files, and `python-multipart` for
 FastAPI file uploads. No OCR library is included.
+
+## Where the RAG mechanisms live
+
+- `config.py` selects `all-minilm:latest`, `TOP_K`, the 180/30 word chunk
+  settings, and both local Chroma collection names.
+- `src/document_loader.py` loads the static text files;
+  `src/documents/extractor.py` extracts uploaded TXT, PDF, and DOCX text.
+- `src/chunker.py` creates overlapping chunks and deterministic chunk IDs.
+- `src/embedder.py` contains the exact `ollama.embed(...)` call and L2
+  normalization.
+- `src/vector_store.py` writes explicit vectors and metadata with Chroma
+  `upsert(...)`, supplies explicit query vectors to Chroma `query(...)`, and
+  converts cosine distance to `similarity = 1 - distance`.
+- `build_index.py` rebuilds the static `static_knowledge` collection;
+  `src/documents/indexer.py` rebuilds one isolated uploaded-document collection.
+- `src/prompt_builder.py` places retrieved chunks into labelled context, and
+  `src/generator.py` contains the exact local generation-model call.
+- `inspect_retrieval.py`, `ask.py`, and `ask_document.py` make Top-K records,
+  scores, the relevance decision, context, answers, and chunk-ID citations
+  visible for verification.
+
+`MIN_SIMILARITY = 0.30` still means cosine similarity. Chroma is configured
+with cosine space and returns cosine distance, so the application converts it
+before applying the same educational heuristic. A failed gate skips generation;
+after a passed gate, the grounded model can still refuse an unsupported answer.
 
 ## Known Limitations
 
@@ -319,7 +348,7 @@ FastAPI file uploads. No OCR library is included.
 - Retrieval uses raw cosine similarity without a learned relevance model.
 - There is no reranker to reconsider the initial vector ranking.
 - The similarity threshold is a heuristic calibrated on only seven questions and cannot perfectly separate every answerable and unanswerable query.
-- There is no vector database; every stored vector is searched directly with NumPy.
+- Chroma is local and single-process for this homework; there is no hosted or distributed vector service.
 - There is no hybrid keyword and vector search.
 - Answer generation uses a small local 4B model with limited reasoning capacity.
 - Generated claims are not automatically checked against source text for factual accuracy.

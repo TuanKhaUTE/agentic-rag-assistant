@@ -27,7 +27,7 @@ SEARCH_KNOWLEDGE_SCHEMA = {
 
 def search_knowledge(query: str, top_k: int = TOP_K) -> dict[str, object]:
     """Retrieve structured chunk results without generating an answer."""
-    _, _, top_results = search(query, top_k=top_k)
+    _, top_results = search(query, top_k=top_k)
     results = [
         {
             "rank": result["rank"],

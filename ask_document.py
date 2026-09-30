@@ -47,6 +47,7 @@ def main() -> None:
     for chunk in top_results:
         print(f"Rank: {chunk['rank']}")
         print(f"Score: {chunk['score']:.6f}")
+        print(f"Cosine distance: {chunk['distance']:.6f}")
         print(f"Chunk ID: {chunk['chunk_id']}")
         print(f"Source: {chunk['source']}")
         print(f"Text preview: {str(chunk['text'])[:180]}")
