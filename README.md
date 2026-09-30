@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Slice 3D complete local web application
+## Current scope: complete local web application
 
 The project currently implements:
 
@@ -33,8 +33,9 @@ Slice 3A accepts local TXT, text-based PDF, and DOCX uploads, extracts their
 text, and stores safe metadata.
 Slice 3B can turn one uploaded document into a separate local chunk and vector
 index. Slice 3C can query exactly one indexed upload through its own API and
-CLI path. Slice 3D exposes that separate upload, indexing, and question path in
-the React UI without changing the Agent or the static `/chat` behavior.
+CLI path. Slice 3D exposes upload, indexing, and questions in the React UI. The
+final cleanup presents one conversation: without an active document, messages
+use `/chat`; with an active document, messages use its isolated RAG endpoint.
 
 ## Project layout
 
@@ -165,12 +166,13 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The page provides two clearly separated paths:
-
-- **General Assistant** calls `/chat` and uses the Agent, approved tools, and
-  static study knowledge.
-- **Uploaded Document Q&A** uploads one TXT, PDF, or DOCX file, indexes it, and
-  asks questions through the document-specific endpoints.
+Open `http://localhost:5173`. The page has one conversation and one composer.
+Without an attached document, Send calls `/chat` and uses the Agent, approved
+tools, and static study knowledge. When one TXT, PDF, or DOCX document is ready,
+Send calls `/documents/{document_id}/ask` and uses only that document's isolated
+index. Detaching clears only the React state and routes later messages back to
+`/chat`; it does not delete the server-side upload. Every stored message retains
+a General Assistant or document filename label so mode changes remain visible.
 
 The browser calls only FastAPI and never calls Ollama directly. Chat messages,
 the selected document, and document answers exist only in React state and are
@@ -178,14 +180,12 @@ cleared when the page is refreshed.
 
 ## Final web architecture
 
-General chat:
+Route selection and general chat:
 
 ```text
-React
-→ POST /chat
-→ Agent
-→ approved tools / static RAG / Qwen
-→ answer plus Agent metadata
+React Send
+├── no active document → POST /chat → Agent → tools / static RAG / Qwen
+└── active document    → POST /documents/{document_id}/ask
 ```
 
 Uploaded-document preparation:
@@ -270,6 +270,17 @@ educational heuristic calibrated on the static homework corpus, not a universal
 confidence score; different uploaded-document collections may require new
 calibration.
 
+Uploaded-document answerability has two visible checks:
+
+1. `retrieval_gate_passed` reports whether the highest cosine similarity meets
+   the heuristic threshold. If it fails, `generation_called` is false.
+2. If the gate passes, Qwen receives only the retrieved context. It can still
+   return the exact insufficient-information response when the requested fact
+   is absent; in that case `generation_called` is true and `answerable` is false.
+
+The legacy `sufficient_context` response field remains as a compatibility alias
+for `retrieval_gate_passed`; it does not claim that Qwen found an answer.
+
 Each index is stored separately under
 `uploads/<document_id>/index/` as `chunks.json` and `embeddings.npy`. Repeating
 the indexing request rebuilds a temporary complete index and replaces the one
@@ -307,7 +318,7 @@ FastAPI file uploads. No OCR library is included.
 - `all-minilm` can miss nuance or rank generally related text above the best passage.
 - Retrieval uses raw cosine similarity without a learned relevance model.
 - There is no reranker to reconsider the initial vector ranking.
-- The similarity threshold is a heuristic calibrated on only seven questions.
+- The similarity threshold is a heuristic calibrated on only seven questions and cannot perfectly separate every answerable and unanswerable query.
 - There is no vector database; every stored vector is searched directly with NumPy.
 - There is no hybrid keyword and vector search.
 - Answer generation uses a small local 4B model with limited reasoning capacity.

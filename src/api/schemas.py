@@ -58,6 +58,8 @@ class DocumentQuestionResponse(BaseModel):
     similarity_threshold: float
     threshold_is_heuristic: Literal[True]
     threshold_note: str
+    retrieval_gate_passed: bool
     sufficient_context: bool
     generation_called: bool
+    answerable: bool
     retrieved_chunks: list[RetrievedDocumentChunkResponse]

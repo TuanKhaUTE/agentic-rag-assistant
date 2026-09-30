@@ -187,7 +187,9 @@ def ask_indexed_document(
         similarity_threshold=float(result["similarity_threshold"]),
         threshold_is_heuristic=True,
         threshold_note=str(result["threshold_note"]),
+        retrieval_gate_passed=bool(result["retrieval_gate_passed"]),
         sufficient_context=bool(result["sufficient_context"]),
         generation_called=bool(result["generation_called"]),
+        answerable=bool(result["answerable"]),
         retrieved_chunks=retrieved_chunks,
     )

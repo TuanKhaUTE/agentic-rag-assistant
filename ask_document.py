@@ -52,15 +52,13 @@ def main() -> None:
         print(f"Text preview: {str(chunk['text'])[:180]}")
         print()
 
-    decision = (
-        "sufficient context"
-        if result["sufficient_context"]
-        else "insufficient context"
-    )
+    gate_decision = "passed" if result["retrieval_gate_passed"] else "failed"
     print("=== RELEVANCE DECISION ===")
     print(f"Highest score: {result['highest_similarity']:.6f}")
     print(f"Threshold: {result['similarity_threshold']:.2f}")
-    print(f"Decision: {decision} (heuristic)")
+    print(f"Retrieval gate: {gate_decision} (heuristic)")
+    print(f"Generation called: {'yes' if result['generation_called'] else 'no'}")
+    print(f"Answerable from context: {'yes' if result['answerable'] else 'no'}")
     print(f"Note: {result['threshold_note']}")
 
     print("\n=== CONTEXT SENT TO LLM ===")

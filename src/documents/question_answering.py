@@ -24,13 +24,13 @@ def answer_uploaded_document(
     retrieval = retrieve_uploaded_document(document_id, question, top_k=top_k)
     top_results = retrieval["top_results"]
     highest_similarity = float(top_results[0]["score"])
-    sufficient_context = highest_similarity >= MIN_SIMILARITY
+    retrieval_gate_passed = highest_similarity >= MIN_SIMILARITY
 
     context = ""
     system_message = ""
     user_message = ""
     generation_called = False
-    if sufficient_context:
+    if retrieval_gate_passed:
         context, system_message, user_message = build_uploaded_document_prompt(
             question,
             top_results,
@@ -40,14 +40,20 @@ def answer_uploaded_document(
     else:
         answer = INSUFFICIENT_INFORMATION_MESSAGE
 
+    # After retrieval passes, Qwen can still find that the supplied chunks do
+    # not support an answer and return the required refusal sentence.
+    answerable = answer != INSUFFICIENT_INFORMATION_MESSAGE
+
     return {
         **retrieval,
         "question": question,
         "highest_similarity": highest_similarity,
         "similarity_threshold": MIN_SIMILARITY,
         "threshold_note": UPLOADED_THRESHOLD_NOTE,
-        "sufficient_context": sufficient_context,
+        "retrieval_gate_passed": retrieval_gate_passed,
+        "sufficient_context": retrieval_gate_passed,
         "generation_called": generation_called,
+        "answerable": answerable,
         "context": context,
         "system_message": system_message,
         "user_message": user_message,
