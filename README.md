@@ -5,7 +5,7 @@ later, an AI agent from first principles. Important mechanisms stay visible in
 plain Python instead of being hidden by frameworks such as LangChain or
 LlamaIndex.
 
-## Current scope: Slice 3B uploaded-document indexing
+## Current scope: Slice 3C uploaded-document question answering
 
 The project currently implements:
 
@@ -30,11 +30,11 @@ changing the Agent architecture.
 Slice 1 adds a minimal local FastAPI wrapper that reuses the existing Agent.
 Slice 2 adds a temporary in-browser React chat history that calls only that API.
 Slice 3A accepts local TXT, text-based PDF, and DOCX uploads, extracts their
-text, and stores safe metadata. Uploaded documents are not yet chunked,
-embedded, indexed, retrieved, or connected to chat.
+text, and stores safe metadata.
 Slice 3B can turn one uploaded document into a separate local chunk and vector
-index. Query retrieval and chat integration for uploaded documents are not yet
-implemented.
+index. Slice 3C can query exactly one indexed upload through its own API and
+CLI path. Uploaded-document questions are intentionally not connected to the
+Agent, the static `/chat` endpoint, or the React UI.
 
 ## Project layout
 
@@ -61,6 +61,7 @@ uploads/               Ignored local document storage, organized by document ID
 src/documents/          Upload storage and TXT/PDF/DOCX text extraction
 inspect_document.py    Inspects extraction from one local document
 inspect_uploaded_index.py  Inspects one uploaded document's chunks and vectors
+ask_document.py        Runs visible retrieval and grounded QA for one upload
 ```
 
 ## Run Phase 1A
@@ -209,6 +210,25 @@ Inspect the generated document-specific index:
 python inspect_uploaded_index.py "<document_id>"
 ```
 
+Ask a question against exactly that uploaded document:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/documents/<document_id>/ask" `
+  -ContentType "application/json" `
+  -Body (@{ question = "What is the main topic?" } | ConvertTo-Json)
+
+python ask_document.py "<document_id>" "What is the main topic?"
+```
+
+The endpoint loads only the index belonging to the supplied document ID. It
+embeds the question with `all-minilm:latest`, ranks that document's normalized
+vectors with a NumPy dot product, and sends labelled Top-3 context to Qwen only
+when the highest score reaches `MIN_SIMILARITY`. The `0.30` cutoff is an
+educational heuristic calibrated on the static homework corpus, not a universal
+confidence score; different uploaded-document collections may require new
+calibration.
+
 Each index is stored separately under
 `uploads/<document_id>/index/` as `chunks.json` and `embeddings.npy`. Repeating
 the indexing request rebuilds a temporary complete index and replaces the one
@@ -238,7 +258,7 @@ FastAPI file uploads. No OCR library is included.
 
 ## Known Limitations
 
-- Uploaded-document indexes cannot yet be queried or used by chat.
+- Uploaded-document indexes can be queried one at a time, but are not connected to the Agent, static `/chat`, or React UI.
 - Each uploaded document has its own index; combined document retrieval is not implemented.
 - The knowledge base contains only five small documents.
 - Chunking uses word counts rather than semantic or token-aware boundaries.

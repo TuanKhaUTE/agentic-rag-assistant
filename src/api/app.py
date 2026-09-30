@@ -10,6 +10,8 @@ from src.api.schemas import (
     ChatResponse,
     DocumentIndexResponse,
     DocumentMetadataResponse,
+    DocumentQuestionRequest,
+    DocumentQuestionResponse,
     DocumentUploadResponse,
 )
 from src.documents import (
@@ -23,6 +25,8 @@ from src.documents import (
     supported_extension,
 )
 from src.documents.indexer import DocumentIndexError, index_uploaded_document
+from src.documents.question_answering import answer_uploaded_document
+from src.documents.retriever import DocumentNotIndexedError
 
 
 logger = logging.getLogger(__name__)
@@ -139,3 +143,51 @@ def index_document(document_id: str) -> DocumentIndexResponse:
         ) from error
 
     return DocumentIndexResponse(**metadata)
+
+
+@app.post(
+    "/documents/{document_id}/ask",
+    response_model=DocumentQuestionResponse,
+)
+def ask_indexed_document(
+    document_id: str,
+    request: DocumentQuestionRequest,
+) -> DocumentQuestionResponse:
+    try:
+        result = answer_uploaded_document(document_id, request.question)
+    except DocumentNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DocumentNotIndexedError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except DocumentIndexError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("Uploaded-document question failed: %s", type(error).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail="The document question could not be completed.",
+        ) from error
+
+    metadata = result["metadata"]
+    retrieved_chunks = [
+        {
+            "rank": chunk["rank"],
+            "score": chunk["score"],
+            "chunk_id": chunk["chunk_id"],
+            "source": chunk["source"],
+        }
+        for chunk in result["top_results"]
+    ]
+    return DocumentQuestionResponse(
+        document_id=document_id,
+        filename=str(metadata["filename"]),
+        answer=str(result["answer"]),
+        top_k=len(retrieved_chunks),
+        highest_similarity=float(result["highest_similarity"]),
+        similarity_threshold=float(result["similarity_threshold"]),
+        threshold_is_heuristic=True,
+        threshold_note=str(result["threshold_note"]),
+        sufficient_context=bool(result["sufficient_context"]),
+        generation_called=bool(result["generation_called"]),
+        retrieved_chunks=retrieved_chunks,
+    )

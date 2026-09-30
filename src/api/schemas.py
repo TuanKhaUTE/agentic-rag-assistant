@@ -36,3 +36,28 @@ class DocumentIndexResponse(BaseModel):
     chunk_count: int
     embedding_model: str
     embedding_dimension: int
+
+
+class DocumentQuestionRequest(BaseModel):
+    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class RetrievedDocumentChunkResponse(BaseModel):
+    rank: int
+    score: float
+    chunk_id: str
+    source: str
+
+
+class DocumentQuestionResponse(BaseModel):
+    document_id: str
+    filename: str
+    answer: str
+    top_k: int
+    highest_similarity: float
+    similarity_threshold: float
+    threshold_is_heuristic: Literal[True]
+    threshold_note: str
+    sufficient_context: bool
+    generation_called: bool
+    retrieved_chunks: list[RetrievedDocumentChunkResponse]
