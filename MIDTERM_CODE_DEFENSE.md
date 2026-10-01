@@ -1,874 +1,708 @@
 # Midterm Code Defense Map — AI Homework Lab
 
-> Mục tiêu: tài liệu học để bảo vệ **đúng code hiện tại**. Số dòng được chốt theo working tree tại ngày 2026-09-30. Đây không phải mô tả kiến trúc lý tưởng chung chung.
+> Mục tiêu: tài liệu học để bảo vệ đúng **repository hiện tại**. Toàn bộ số dòng được audit lại từ working tree ngày 2026-10-01. Đây là bản đồ code thực tế, không phải kiến trúc lý tưởng chung chung.
 
-## Audit snapshot và verdict
+## Audit snapshot và consistency verdict
 
-- `git status --short`: sạch trước khi audit.
-- 10 commit gần nhất:
-  - `9066541 feat: add optional Gemini RAG provider`
-  - `c3d9b2d feat: migrate RAG vector storage to Chroma`
-  - `565ebd7 refactor: unify chat interface and clarify answerability`
-  - `a4720f2 feat: add uploaded document chat interface`
-  - `507a0d3 feat: add uploaded document question answering`
-  - `509c12d feat: add uploaded document indexing`
-  - `0dce346 feat: add document upload and text extraction`
-  - `e636ea3 feat: add React chat assistant interface`
-  - `a7b81e3 feat: add FastAPI chat backend`
-  - `4510451 feat: add agent evaluation and final documentation`
-- Đã rà toàn repository, loại trừ `.venv`, `node_modules`, `frontend/dist`, dữ liệu Chroma sinh ra, uploads sinh ra và `.git`.
-- Verdict: kiến trúc runtime nhất quán với React → FastAPI → Agent hoặc RAG; embedding `all-minilm:latest`; vector DB Chroma local; Qwen local mặc định; optional RAG generation dùng Gemini 3.5 Flash; Agent chỉ dùng Ollama/Qwen.
+- Working tree sạch trước khi refresh tài liệu.
+- Đã đọc lại 25 core runtime files được yêu cầu: React services/UI, FastAPI schemas/endpoints, document package, shared RAG modules, Agent loop/registry, toàn bộ `src/tools/*`, config, static builder và hai evaluation scripts.
+- Các entry point, package facade, static loader, inspection scripts, test data, dependencies và ignore rules cũng được đối chiếu bổ sung.
+- Runtime nhất quán: `all-minilm:latest` tạo embedding; Chroma local lưu/query vector; RAG generation mặc định dùng `qwen3:4b-instruct` và có thể chuyển sang `gemini-3.5-flash`; Agent luôn dùng Ollama/Qwen.
+- Uploaded Knowledge Base hỗ trợ 1–N file TXT/MD/PDF/DOCX. Mỗi document có Chroma index riêng; query lấy candidate từ mọi document đang active rồi chọn **một GLOBAL Top-K**.
+- `knowledge/*.txt` là sample/regression corpus cho static RAG và Agent tool. Nó không phải teacher-uploaded Knowledge Base.
+- Không có thay đổi runtime trong lần refresh này; chỉ file này được cập nhật.
 
-### Consistency result after final cleanup
+## 1. Assistant architecture
 
-- `config.py:25` và các ví dụ README cùng dùng `gemini-3.5-flash`.
-- Tài liệu uploaded RAG dùng wording provider-neutral vì generator có thể là Ollama/Qwen hoặc Gemini.
-- Đoạn inspection gọi rõ tên `inspect_chunks.py` và phạm vi static knowledge documents.
-- Không còn stale active/config/documentation reference tới model Gemini cũ.
-
-Không tìm thấy dead NumPy RAG path, obsolete `.npy`/JSON index, `Path A`/`Path B`, `gemini-3.8`, hay dependency runtime thừa rõ ràng. `numpy` vẫn cần cho vector; `python-multipart` được FastAPI dùng ngầm cho `UploadFile`; `pypdf`, `python-docx`, `chromadb`, `ollama`, `google-genai`, `fastapi`, `uvicorn` đều có đường chạy thực tế. Dòng README nói về NumPy trước đây (`README.md:26-27`) là lịch sử được đánh dấu rõ, không phải mô tả runtime hiện tại.
-
-## 1. Overall Assistant architecture
+### 1.1 General mode
 
 ```text
-Browser / React
-├─ General mode → POST /chat → bounded Qwen Agent
-│  └─ allowlisted tools → static Chroma knowledge / calculator / safe files
-└─ Document mode
-   ├─ upload → extract TXT/PDF/DOCX
-   ├─ index → chunk → all-minilm → normalize → isolated Chroma
-   └─ ask → query embedding → Chroma Top-K → gate → prompt
-             → configured RAG generator (Ollama/Qwen OR Gemini) → cited answer
+React
+→ POST /chat
+→ bounded Ollama/Qwen Agent
+→ optional allowlisted tool call(s)
+   ├── search_knowledge → static sample Chroma
+   ├── calculator
+   ├── list_files
+   └── read_file
+→ observation
+→ Qwen next decision
+→ final answer
 ```
 
-Hai đường chat cố ý khác nhau. `/chat` là Agent động và **luôn** Qwen/Ollama. `/documents/{id}/ask` là RAG cố định, có thể đổi **chỉ generation** bằng `LLM_PROVIDER`. Static CLI `ask.py` cũng dùng provider RAG đó. Upload không nhập vào static collection và không trở thành Agent memory.
+Khi `activeDocuments.length === 0`, `App.sendMessage` đi nhánh `sendChatMessage` tại `frontend/src/App.jsx:239-250`. FastAPI `/chat` gọi đúng shared Agent tại `src/api/app.py:59-74`. Agent có thể trả lời trực tiếp hoặc gọi tool; nó không tự động dùng uploaded indexes.
 
-### FILE: `frontend/index.html`
+### 1.2 Uploaded Knowledge Base mode
 
-**Purpose:** HTML shell để Vite mount React.
+```text
+1–N files
+→ upload từng file
+→ extract TXT / MD / PDF / DOCX
+→ chunk từng file
+→ all-minilm embeddings + L2 normalization
+→ mỗi document có một local Chroma index riêng
 
-| Lines / exact snippet | Giải thích đơn giản, I/O và flow | Tại sao / nếu bỏ / câu hỏi dễ gặp |
+Question
+→ one all-minilm query embedding
+→ query every ACTIVE uploaded document
+→ collect per-document candidates
+→ merge candidates
+→ sort globally by cosine similarity
+→ FINAL GLOBAL TOP_K
+→ relevance gate
+→ labelled context
+→ grounded prompt
+→ configured RAG generator
+   ├── Ollama / qwen3:4b-instruct
+   └── Gemini / gemini-3.5-flash
+→ answer + document-scoped citations
+```
+
+Khi có ít nhất một active document, `App.sendMessage` snapshot array và gửi ID list tại `frontend/src/App.jsx:211-228`. Endpoint `POST /documents/ask` nhận list tại `src/api/app.py:172-215`; single-document compatibility vẫn tồn tại qua `POST /documents/{document_id}/ask` tại lines 218-259.
+
+### 1.3 Frontend entry và mode ownership
+
+| File / lines | Trách nhiệm hiện tại | Điểm bảo vệ |
 |---|---|---|
-| 13-14: `<div id="root"></div>`; `<script type="module" src="/src/main.jsx">` | Trình duyệt tạo điểm mount rồi tải entry JS. Input là page load; output là module React chạy; gọi tiếp `main.jsx`. | Bỏ `root` thì `createRoot` không có DOM node. Hỏi: “React bắt đầu ở đâu?” |
+| `frontend/index.html:17-18` | Tạo `#root`, nạp `/src/main.jsx`. | React bắt đầu từ DOM mount này. |
+| `frontend/src/main.jsx:1-12` | Import `App`/CSS và render trong `StrictMode`. | Không có model logic ở entry. |
+| `frontend/src/App.jsx:154-177` | Giữ chat state, `activeDocuments`, `pendingDocuments`, aggregate chunk count và mode label. | State chỉ nằm trong browser; refresh sẽ mất selection/history. |
+| `frontend/src/App.jsx:204-266` | Router thật của unified chat: active IDs → uploaded RAG; empty array → `/chat`. | Không có hai trang/chat riêng. |
+| `frontend/src/styles.css:95-1106` | Academic Evergreen layout, messages, RAG evidence, active-document chips và composer. | Presentation only; không chứa AI logic. |
 
-### FILE: `frontend/src/main.jsx`
+### 1.4 Current end-to-end flows
 
-**Purpose:** React bootstrap.
+#### Flow A — Teacher provides three files
 
-| Lines / exact snippet | Giải thích đơn giản, I/O và flow | Tại sao / nếu bỏ / câu hỏi dễ gặp |
+1. `<input multiple>` nhận 1–N file tại `App.jsx:567-575`.
+2. `selectDocuments` chuyển `FileList` thành array, validate từng file tại lines 324-338.
+3. `prepareDocuments` tạo pending records rồi loop `for (const pending of queued)` tại lines 281-314.
+4. Mỗi vòng gọi `uploadDocument` rồi `indexDocument` tại lines 295-301.
+5. `/documents/upload` đọc tối đa `MAX_UPLOAD_BYTES + 1` và gọi `create_document` tại `app.py:77-108`.
+6. Storage sinh UUID, lưu `original.ext`, extract và lưu metadata tại `storage.py:48-88`.
+7. `/documents/{id}/index` gọi indexer tại `app.py:131-151`.
+8. Indexer re-extracts, chunks, embeds, normalizes và rebuilds Chroma riêng tại `indexer.py:30-73`.
+9. Mỗi thành công được append vào `activeDocuments` tại `App.jsx:298-301`.
+
+#### Flow B — Question across three active files
+
+1. UI snapshot `activeDocuments` tại `App.jsx:211`.
+2. IDs được collect bằng `.map(document => document.document_id)` tại lines 225-227.
+3. `askDocuments` gửi `{document_ids, question}` đến `/documents/ask` tại `documentApi.js:72-85`.
+4. Pydantic nhận non-empty list qua `MultiDocumentQuestionRequest` tại `schemas.py:45-46`.
+5. API gọi `answer_uploaded_documents` tại `app.py:176-180`.
+6. Retriever load/validate từng ID trong loop tại `retriever.py:82-110`.
+7. Question được embed đúng một lần tại line 114.
+8. Mỗi collection được query với cùng vector tại lines 116-132.
+9. Candidates được merge bằng `candidates.extend(...)` line 132.
+10. Global sort và final slice xảy ra tại lines 137-140.
+11. QA dùng score cao nhất của merged set để gate tại `question_answering.py:44-46`.
+12. Prompt labels giữ filename + full document-scoped chunk ID tại `prompt_builder.py:49-65`.
+13. Generator switch provider tại `generator.py:58-70` và trả answer có citation.
+
+#### Flow C — Detach one file
+
+`detachDocument` filter đúng `document_id` khỏi frontend array tại `App.jsx:340-346`. Server-side file/index không bị xóa. Lần hỏi sau ID đó không xuất hiện trong request array, nên retriever không load hay query collection đó.
+
+#### Flow D — Detach all
+
+`detachAllDocuments` đặt array thành `[]` tại `App.jsx:351-357`. Lần send sau điều kiện ở line 224 false, nên đi `sendChatMessage` lines 239-250 và trở lại General Agent `/chat`.
+
+#### Flow E — Same uploaded Knowledge Base with Qwen versus Gemini
+
+Upload, extraction, chunks, all-minilm vectors, Chroma candidates, global ranking, gate và prompt đều giống nhau. Điểm switch duy nhất là `generate_answer` tại `generator.py:58-70`: `LLM_PROVIDER=ollama` gọi lines 17-34; `LLM_PROVIDER=gemini` gọi lines 37-55. Đổi generator không rebuild Chroma.
+
+#### Flow F — General calculator Agent
+
+1. No active uploads → `/chat`.
+2. Qwen sees tool schemas tại `agent_loop.py:81-92`.
+3. Model proposes `calculator` call; Python parses call lines 93-115.
+4. Registry validates allowlist/schema và executes function tại `tool_registry.py:65-108`.
+5. Calculator walks restricted AST tại `calculator_tool.py:39-76`.
+6. Tool result becomes JSON observation tại `agent_loop.py:119-134`.
+7. Next Qwen turn reads observation and returns final answer.
+
+## 2. Model selection, switching and inference
+
+### 2.1 Configuration
+
+| File / lines | Exact responsibility | Defense answer |
 |---|---|---|
-| 1-5: imports React, `ReactDOM`, `App`, CSS | Nạp React runtime, component gốc và style. Caller là browser module loader; gọi tiếp `App`. | Bỏ `App` không có UI; bỏ CSS chỉ mất presentation. Hỏi: “Entry point frontend là dòng nào?” |
-| 8-12: `ReactDOM.createRoot(...).render(<React.StrictMode><App />...)` | Gắn component tree vào `#root`. Input DOM element; output UI; `StrictMode` giúp phát hiện lỗi dev. | Bỏ thì trang trống. Hỏi: “Component đầu tiên là gì?” |
+| `config.py:18` | `EMBEDDING_MODEL = "all-minilm:latest"`. | Same semantic vector space for chunks and questions. |
+| `config.py:20` | `LLM_PROVIDER`, default `ollama`. | Selects only fixed RAG answer generation. |
+| `config.py:21-24` | Qwen default and optional Ollama model override. | Default local RAG generator is `qwen3:4b-instruct`. |
+| `config.py:25` | Gemini model env/default. | Current intended default is exactly `gemini-3.5-flash`. |
+| `config.py:26` | Gemini key from environment, blank by default. | Secret is backend-only and not committed. |
+| `config.py:28-29` | `GENERATION_MODEL = DEFAULT_QWEN_MODEL`. | Agent remains Ollama/Qwen even if RAG provider is Gemini. |
 
-### Entry-point files
+### 2.2 Inference code
 
-| File / lines | Purpose và flow | Nếu bỏ / lecturer question |
-|---|---|---|
-| `run_api.py:1-10` — `uvicorn.run("src.api.app:app", host="127.0.0.1", port=8000, reload=True)` | Import Uvicorn và chạy FastAPI local. Input: chạy script; output: HTTP server; Uvicorn import `app`. | Không có tiện ích khởi động backend. Hỏi: “Server bind ở đâu, port nào?” |
-| `run_agent.py:1-13` — `run_agent(goal)` | Lấy goal từ CLI hoặc default, gọi đúng shared Agent loop. Output được loop tự print. | Mất CLI demo, API vẫn chạy. Hỏi: “CLI có duplicate Agent không?” — Không. |
-| `ask.py:23-83` | CLI static RAG nhìn thấy retrieval, gate, prompt/provider và answer. Input argv; gọi `search` → `build_grounded_prompt` → `generate_answer`. | Mất demo static RAG, core vẫn còn. Hỏi: “Gate xảy ra trước model ở đâu?” — lines 41-54. |
-| `ask_document.py:17-86` | CLI uploaded RAG; gọi `answer_uploaded_document`, rồi in vector, Top-K, gate, context, provider, answer. | Mất demo document RAG, API vẫn còn. Hỏi: “CLI và API có dùng chung QA không?” — Có, line 26. |
-| `build_index.py:17-78` | Orchestrator tạo static Chroma: load → chunk → embed → normalize → rebuild. | Không thể reproducibly build static KB. Hỏi: “Static index được build ở đâu?” |
+- Embedding inference: `src/embedder.py:14` calls `ollama.embed(model=EMBEDDING_MODEL, input=texts)`.
+- Ollama RAG generation: `src/generator.py:17-34` calls `ollama.chat` with low temperature, 4096 context and 512 output limit.
+- Gemini RAG generation: `src/generator.py:37-55` validates key/model then calls `client.models.generate_content(model=GEMINI_MODEL, ...)`.
+- Provider switch: `src/generator.py:58-70`; unknown provider causes controlled error and never silently falls back.
+- Agent inference/tool selection: `src/agent/agent_loop.py:83-92` uses fixed `GENERATION_MODEL` plus tool schemas.
 
-## 2. Frontend / React
+### 2.3 Responsibility table
 
-### FILE: `frontend/src/App.jsx`
+| Component | Input → output | Responsibility | Not responsible for |
+|---|---|---|---|
+| `all-minilm:latest` | text(s) → observed 384-dimensional vectors | Chunk/query embedding | Answers, tools, path safety |
+| Chroma | explicit vectors/metadata ↔ distances/records | Persistent local vector index and cosine nearest-neighbor query | Embedding model choice, answer generation |
+| `qwen3:4b-instruct` | messages/context/schemas → text or tool call | Default grounded RAG answer and only Agent controller | Extracting/indexing files |
+| `gemini-3.5-flash` | grounded RAG prompt → answer text | Optional cloud RAG generation | Agent loop/tool selection |
 
-**Purpose:** Một trang chat, giữ state tạm thời, chọn general/document mode, upload-index-ask và trình bày metadata.
+Không có training/fine-tuning. Project chỉ chạy inference: `extract → chunk → embed → index`; lúc hỏi: `embed query → retrieve → generate`.
 
-| Lines / exact snippet | Giải thích đơn giản, input/output/caller/next | Tại sao / nếu bỏ / likely question |
-|---|---|---|
-| 1-9: `useEffect/useRef/useState`; service imports | Hook quản lý state/DOM; mọi network call đi qua service. Caller `main.jsx`; gọi `chatApi`/`documentApi`. | Tách UI khỏi endpoint details. Hỏi: “React có gọi Ollama không?” — Không. |
-| 12-19: examples, extensions, `MAX_UPLOAD_BYTES` | UI hints và client-side 10 MB/type validation; server vẫn kiểm tra lại. | Bỏ validation client thì UX kém, security server vẫn giữ. Hỏi: “Client validation có đủ an toàn không?” — Không. |
-| 22-29 `GeneralMetadata` | Render `steps`, `tools_used`; input response `/chat`, output JSX. | Lecturer thấy Agent hoạt động. |
-| 32-70 `DocumentMetadata` | Render filename, similarity, Top-K, threshold, gate, generation, answerable và chunk IDs. | Là bằng chứng RAG; bỏ không làm backend sai nhưng mất transparency. |
-| 73-88 `validateSelectedFile(file)` | Reject thiếu file, extension sai, 0 byte, >10 MB. Output chuỗi lỗi hoặc `""`. | Frontend guard; server là authority. |
-| 91-93 `friendlyDocumentError` | Chỉ hiện controlled `DocumentApiError`; lỗi khác dùng fallback. | Tránh phơi chi tiết lạ. |
-| 96-113 state và derived mode | `messages/input/loading/error` là chat tạm; `documentInfo/status` điều khiển routing. `activeDocument` chỉ có khi `ready`. | Bỏ status dễ hỏi document trước indexing. Hỏi: “Persistent memory?” — Không, state mất khi refresh. |
-| 115-117 `useEffect(...scrollIntoView...)` | Sau message/loading change, scroll xuống cuối. Presentation only. |
-| 125-184 `sendMessage` | Trim/reject; snapshot active doc; append user; **branch lines 145-170**: document gọi `askDocument`, general gọi `sendChatMessage`; append assistant metadata; finally unlock. | Đây là router thật của UI. Bỏ branch sẽ trộn Agent và document RAG. Hỏi: “Mode được quyết định ở đâu?” |
-| 186-191 `handleKeyDown` | Enter gửi, Shift+Enter xuống dòng. Calls `sendMessage`. |
-| 193-221 `prepareDocument` | `uploadDocument(file)` rồi `indexDocument(id)`; chỉ set `ready` sau cả hai. On failure phục hồi document cũ. | Đảm bảo ask chỉ dùng index đã sẵn sàng. Hỏi: “Upload có tự là RAG chưa?” — Chưa, indexing là call thứ hai. |
-| 223-237 `selectDocument` | Lấy file input, validate, rồi calls `prepareDocument`. |
-| 239-251 `detachDocument` | Xóa selection khỏi React state; không xóa server data. | Chuyển lại general mode, không phải delete. |
-| 253-412 render tree | Message history, attach state, `<textarea>`, disabled states, send form. Lines 299-307 chọn metadata theo mode; 383-406 form gọi `sendMessage`. | Bỏ disabled có thể double-submit. Hỏi: “Conversation lưu ở đâu?” — `messages` state line 97. |
+## 3. Document loading and extraction
 
-### FILE: `frontend/src/services/chatApi.js`
+### 3.1 Static sample loader
 
-**Purpose:** HTTP client duy nhất cho normal Agent chat.
+`src/document_loader.py:12-33` chỉ glob `knowledge/*.txt` theo filename order, đọc UTF-8, bỏ empty file và tạo records gồm `path/source/title/text/word_count`. Static builder dùng loader này; uploaded exam files không đi qua nó.
 
-| Lines / snippet | Giải thích và flow | Why/break/question |
-|---|---|---|
-| 1: `CHAT_URL = "http://127.0.0.1:8000/chat"` | Backend address local. | Sai URL thì general chat fail. |
-| 4-11: `fetch(CHAT_URL, {method:"POST", ... body: JSON.stringify({ message })})` | Input string; gửi JSON `/chat`; caller `App:158`. | Đây là exact normal request. Hỏi: “Frontend gửi message ở đâu?” |
-| 13-26 response validation | Reject HTTP lỗi hoặc JSON thiếu `answer/steps/tools_used`; output validated object. | Tránh UI dùng shape sai. |
+### 3.2 Uploaded file selection and HTTP upload
 
-### FILE: `frontend/src/services/documentApi.js`
-
-**Purpose:** HTTP client cho upload, index và ask một document.
-
-| Lines / snippet | Giải thích và flow | Why/break/question |
-|---|---|---|
-| 1: `API_BASE_URL` | Base backend local. |
-| 4-10 `DocumentApiError` | Error có friendly message + HTTP status. Caller UI helper. |
-| 13-23 `controlledError` | Đọc FastAPI `{detail}` nếu có, fallback nếu parse fail. | Không lộ stack trace. |
-| 26-38 `uploadDocument` | `FormData.append("file", file)` → `POST /documents/upload`; output metadata extracted. | Không tự set multipart header để browser thêm boundary. |
-| 41-50 `indexDocument` | POST encoded document ID `/index`; output index metadata. | Tách ingestion khỏi indexing. |
-| 53-69 `askDocument` | POST JSON `{question}` vào encoded `/ask`; output grounded result + retrieval metadata. | Exact uploaded-question request. |
-
-### FILE: `frontend/src/styles.css`
-
-**Purpose:** projector-readable, responsive visual layer; không chứa AI logic.
-
-| Lines | Meaning / impact |
+| Location | Current behavior |
 |---|---|
-| 1-32 | Global typography, colors, box sizing, keyboard focus accessibility. |
-| 34-183 | Page/chat layout và user-vs-assistant bubbles. Nếu bỏ, chức năng còn nhưng khó demo. |
-| 185-257 | Agent/document metadata và source-score layout. |
-| 264-407 | Errors, attachment controls, composer/loading/disabled affordances. |
-| 409-435 | Mobile breakpoint stacks controls vertically. |
+| `App.jsx:30-31` | Client recognizes TXT/MD/PDF/DOCX and mirrors 10 MB limit. |
+| `App.jsx:131-146` | Reject missing, unsupported, empty or oversized selected file for UX. |
+| `App.jsx:324-338` | Validates every selected file before preparing the batch. |
+| `App.jsx:567-575` | File input has `accept=".txt,.md,.pdf,.docx"` and `multiple`. |
+| `documentApi.js:26-38` | Sends one file per multipart `POST /documents/upload`; browser supplies boundary. |
+| `app.py:77-108` | Backend authoritative validation, bounded read, safe exception mapping and file close. |
 
-## 3. FastAPI backend
+### 3.3 Exact format extraction
 
-### FILE: `src/api/schemas.py`
-
-**Purpose:** Pydantic validates HTTP input/output contracts.
-
-| Lines / snippet | Giải thích, I/O và flow | Why/break/question |
+| Format | Current code | Explanation |
 |---|---|---|
-| 1-3 imports `Annotated`, `Literal`, `BaseModel`, `StringConstraints` | Tạo typed schemas và non-empty trimmed strings. | Bỏ constraints thì empty chat/question lọt vào business logic. |
-| 6-13 `ChatRequest/ChatResponse` | Request `{message}`; response `{answer,steps,tools_used}`. FastAPI calls validation automatically. |
-| 16-29 metadata/upload models | Chỉ expose safe metadata; status restricted `extracted|indexed`; upload thêm preview. | Không expose filesystem path/full text. |
-| 32-38 `DocumentIndexResponse` | Contract sau index: ID/name/status/chunks/model/dimension. |
-| 41-42 `DocumentQuestionRequest` | Reject blank document question. |
-| 45-53 `RetrievedDocumentChunkResponse` | Safe Top-K metadata: score/similarity/distance/IDs; deliberately no full text. |
-| 56-69 `DocumentQuestionResponse` | Expose gate vs final answerability và whether generation ran. | Giúp phân biệt retrieval failure/generator refusal. |
+| Allowlist | `extractor.py:10,21-28` | Only `.txt`, `.md`, `.pdf`, `.docx`; extension normalized lowercase. |
+| TXT | `extractor.py:31-47` | Shared UTF-8 reader; rejects invalid encoding/blank text. |
+| MD | `extractor.py:50-52` | Calls the same UTF-8 plain-text helper; no Markdown parser/library. |
+| PDF | `extractor.py:55-66` | `PdfReader`; joins text from pages. Empty text reports likely scanned PDF/OCR need. |
+| DOCX | `extractor.py:69-83` | `python-docx`; collects paragraphs and table cells; rejects corrupt/empty files. |
+| Dispatcher | `extractor.py:86-96` | Maps allowed extension to exact extractor. |
 
-### FILE: `src/api/app.py`
+OCR is intentionally absent. An image-only PDF is different from a text-based PDF because `page.extract_text()` cannot recover pixels as text.
 
-**Purpose:** HTTP boundary; translate validated requests/exceptions into responses; delegates all AI logic.
+### 3.4 Safe upload storage
 
-| Lines / snippet | Giải thích, input/output/calls | Why/break/question |
-|---|---|---|
-| 1-30 imports | FastAPI/CORS plus shared Agent, document storage/index/QA and controlled errors. | Chứng minh endpoint không duplicate core logic. |
-| 35-46 `FastAPI` + `CORSMiddleware` | Cho localhost:5173/127.0.0.1:5173 gọi GET/POST JSON/multipart. | Browser khác origin sẽ bị chặn; CORS không phải auth. |
-| 49-51 `GET /health` | Input none; output `{"status":"ok"}`. |
-| 54-69 `POST /chat` | Pydantic → `run_agent_with_metadata(request.message)` → `ChatResponse`; unexpected lỗi thành generic 500, server log giữ type. | Shared Agent behavior; không lộ stack trace. |
-| 72-103 `POST /documents/upload` | Validate extension, bounded read `MAX+1`, `create_document`; map 415/400/413/422; always close UploadFile. | Prevent arbitrary/oversize uploads and resource leak. |
-| 106-123 `GET /documents/{id}` | Calls `get_document_metadata`; 404 controlled; returns safe schema. |
-| 126-146 `POST .../index` | Calls `index_uploaded_document`; maps not-found/extract/index errors. | Endpoint only orchestrates, indexer owns pipeline. |
-| 149-202 `POST .../ask` | Calls `answer_uploaded_document`; 404 invalid ID, 409 not indexed, 503 bad generator config; maps Top-K to safe response. | Keeps text/context internal. Hỏi: “generation status returned where?” lines 188-201. |
+- Filename sanitation: `storage.py:25-30` keeps only basename metadata.
+- Document ID validation: `storage.py:33-36` allows only 32 lowercase hexadecimal characters before joining paths.
+- Size/empty/type checks and UUID directory creation: `storage.py:48-64`.
+- Original bytes, extraction and safe metadata: `storage.py:65-88`.
+- Original filename is stored in `metadata["filename"]` at lines 68-75; this later becomes chunk `source`.
+- Safe internal original path supports all four types at `storage.py:111-120`.
+- Metadata status update uses temporary file then replace at `storage.py:123-142`.
 
-## 4. Configuration
+Upload/extraction is ingestion, not yet RAG. Chunking, embeddings and Chroma happen only after `/index`.
 
-### FILE: `config.py`
-
-**Purpose:** Single source of paths, model IDs, chunk/retrieval settings and provider env.
-
-| Lines / exact snippet | Giải thích và consumers | Why/break/question |
-|---|---|---|
-| 5-13 paths/limits | Root, static knowledge/storage/Chroma, uploaded collection/storage, 10 MB and 500-char preview. Used by loaders/storage/API. | Centralizes safe absolute roots. |
-| 15 `CHUNK_SIZE_WORDS = 180` | Mỗi full chunk tối đa 180 words. Used static/upload indexers. |
-| 16 `CHUNK_OVERLAP_WORDS = 30` | Start step 150; giữ context tại boundary. |
-| 18 `EMBEDDING_MODEL = "all-minilm:latest"` | Cùng model cho chunks và query. Nếu đổi phải rebuild mọi index. |
-| 20 `LLM_PROVIDER = os.getenv(..."ollama")...` | Read once at Python import/start; chooses RAG generator only. |
-| 21-24 Qwen/Ollama settings | Default model `qwen3:4b-instruct`; RAG local model can be env override. |
-| 25-26 Gemini settings | Model/key read from env; default model is `gemini-3.5-flash`; key default blank. |
-| 28-29 `GENERATION_MODEL = DEFAULT_QWEN_MODEL` | Agent remains fixed Ollama/Qwen regardless `LLM_PROVIDER`. |
-| 31 `TOP_K = 3` | Default three retrieved chunks. |
-| 32 `MIN_SIMILARITY = 0.30` | Educational pre-generation heuristic. |
-
-## 5. Document upload and text extraction
-
-### FILE: `src/documents/extractor.py`
-
-**Purpose:** Convert supported file formats into usable plain text; no OCR.
-
-| Lines / snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 1-7 imports `Path`, DOCX, pypdf errors | Format-specific parsers and controlled exceptions. |
-| 10 `SUPPORTED_EXTENSIONS` | Allowlist `.txt/.pdf/.docx`. | Không dựa MIME/user path. |
-| 13-18 exception classes | Business errors mapped to HTTP 415/422. |
-| 21-28 `supported_extension` | Input filename; lowercase suffix; output allowed extension or reject. Called upload/storage and dispatcher. |
-| 31-39 `extract_txt_text` | UTF-8 read, reject encoding/empty. Output raw text. |
-| 42-53 `extract_pdf_text` | `PdfReader`; join page text; empty means likely scan/OCR needed. | Bỏ page loop không có PDF content. Hỏi: “Scanned PDF?” — rejected, no OCR. |
-| 56-70 `extract_docx_text` | `Document(file)`; collect paragraphs and table cells; reject corrupt/empty. |
-| 73-82 `extract_text` | Dispatcher by extension → exact extractor. Caller storage/indexer/inspection. | Một public entry keeps behavior consistent. |
-
-### FILE: `src/documents/storage.py`
-
-**Purpose:** Safely persist original upload + JSON metadata under server-generated ID.
-
-| Lines / snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 1-7 imports | JSON, path sanitation, UUID; config limits; extractor reuse. |
-| 10 `DOCUMENT_ID_PATTERN = ...32 hex` | Only UUID-hex IDs accepted. | Prevent user-controlled path components. |
-| 13-22 errors | Empty/too-large/not-found become controlled API statuses. |
-| 25-30 `_safe_metadata_filename` | Normalize slashes, keep basename only, reject `.`/`..`; original name metadata only. |
-| 33-36 `_document_directory` | Validate ID before `UPLOADS_DIR / id`. | First path traversal defense. |
-| 39-45 `_discard_incomplete_document` | Cleanup only files in newly created document folder if extraction fails. | Avoid half-created records. |
-| 48-88 `create_document` | Input bytes+filename; validate size/name/type; UUID; write `original.ext`; extract; write metadata; output metadata+preview. Called API upload; next index may re-extract. | Upload is ingestion, not RAG/training. |
-| 91-101 `get_document_metadata` | Validated ID → parse `metadata.json`; corrupt/missing becomes not-found. |
-| 104-120 directory/original getters | Recheck metadata/file type/existence; output safe server path for internal callers only. |
-| 123-142 `update_document_metadata` | Merge index fields; write temp then atomic-ish `replace`; cleanup temp. | Prevent partial metadata on normal replace. |
-
-### FILE: `src/documents/__init__.py`
-
-**Purpose:** Lines 1-32 re-export the approved extractor/storage public API. Callers (`app.py`, CLIs) import stable names without reaching private helpers. Removing exports breaks those imports; likely question: “Package facade dùng để làm gì?”
-
-## 6. Chunking
+## 4. Chunking
 
 ### FILE: `src/chunker.py`
 
-**Purpose:** Same transparent word-window algorithm for static and uploaded documents.
-
-| Lines / snippet | Giải thích, I/O/caller/next | Why/break/question |
+| Lines | Mechanism | Why it matters |
 |---|---|---|
-| 1-12 `chunk_document` validation | Input document dict, size, overlap; reject impossible windows. Called both indexers. |
-| 14-19 setup; `step = size - overlap` | Split whitespace words; prefix is filename or uploaded ID; with 180/30, step=150. |
-| 21-34 while/build chunk | End-exclusive window; ID `#chunk-001`; store source/index/text/start/end and optional document_id. Output ordered chunk list. | Metadata links retrieval back to source. |
-| 36-38 break/advance | Stop exactly at last word; otherwise advance 150. Prevent infinite/duplicate tail. |
-| 43-53 `chunk_documents` | Batch wrapper extends chunks in input order for static KB. |
+| 1-12 | Validate positive size, nonnegative overlap and overlap smaller than size. | Prevent invalid/infinite windows. |
+| 14-19 | Split whitespace words; `step = chunk_size - overlap`. | With 180/30, next start advances 150 words. |
+| 21-34 | Build `[start_word,end_word)` window and metadata. | Exact chunk text remains traceable. |
+| 25 | ID is `<prefix>#chunk-NNN`. | Static prefix is filename; uploaded prefix is document ID. |
+| 26-33 | Preserve `source`, index, ranges and optional `document_id`. | Filename/ID survive vector storage and multi-document merging. |
+| 36-38 | Stop after last word, otherwise advance by step. | No duplicate tail/infinite loop. |
+| 43-53 | Batch wrapper for static documents. | Uploaded indexer deliberately reuses `chunk_document`. |
 
-## 7. Embedding
+Shared configuration is `CHUNK_SIZE_WORDS = 180` and `CHUNK_OVERLAP_WORDS = 30` at `config.py:15-16`. Overlap preserves ideas near boundaries but increases duplicate text/vector count.
+
+## 5. Embeddings
 
 ### FILE: `src/embedder.py`
 
-**Purpose:** Explicit Ollama embedding and NumPy L2 normalization shared by indexing/query.
-
-| Lines / exact snippet | Giải thích, I/O/caller/next | Why/break/question |
+| Lines | Mechanism | Defense point |
 |---|---|---|
-| 1-4 imports | NumPy handles matrices; official Ollama client calls local embedding model; config chooses model. |
-| 7-14 `embed_texts`; `ollama.embed(model=EMBEDDING_MODEL, input=texts)` | Input ordered non-empty strings; Ollama returns one vector each. Called indexers and `embed_query`. | Exact inference call. It is embedding inference, not LLM training. |
-| 15-25 count/dimension checks | Ensure response rows align and every vector dimension equal (all-minilm is 384 here). |
-| 27-31 `np.asarray(...dtype=np.float32)` | Output 2D float32 matrix; smaller/stable storage and Chroma input. |
-| 34-48 `normalize_embeddings` | Compute L2 norm per row, reject zeros, divide, verify ≈1. Output normalized float32. | Makes cosine geometry explicit and validates vectors before DB. |
+| 7-14 | Validate ordered non-empty strings; call official Ollama embedding API. | One chunk becomes one vector; order is preserved. |
+| 15-25 | Verify output count and equal dimensions. | Prevent chunk/vector misalignment. |
+| 27-31 | Convert to 2D `numpy.float32`. | Compact predictable matrix type. |
+| 34-48 | Compute L2 norm, reject zero vectors, divide and verify norm≈1. | Supports cosine geometry and catches bad vectors. |
 
-## 8. Chroma indexing
+Documents and query must use the same model/dimension because cosine similarity is meaningful only inside the same embedding space. Changing Qwen/Gemini does not affect these embeddings; changing all-minilm requires re-indexing.
 
-### FILE: `src/vector_store.py` (client/write/load blocks)
+## 6. Chroma vector database
 
-**Purpose:** Shared local Chroma adapter; application supplies its own explicit embeddings.
+### 6.1 Shared vector adapter: `src/vector_store.py`
 
-| Lines / exact snippet | Giải thích, I/O/caller/next | Why/break/question |
+| Lines | Exact behavior | Lecturer point |
 |---|---|---|
-| 1-13 imports/`COSINE_DISTANCE_METRIC` | Chroma persistence + NumPy validation; database space is cosine. |
-| 16-22 `chromadb.PersistentClient(path=..., Settings(...False))` | Create directory and persistent local client; telemetry disabled. | Exact DB creation; remove persistence loses local index access. |
-| 25-29 `_collection_names` | Normalize Chroma version return objects/names into set. Used rebuild. |
-| 32-47 `_validate_embeddings` | Requires chunks, 2D, row alignment, finite values, norm≈1. | Protects `chunks[i] ↔ vector[i]`. |
-| 50-61 rebuild/delete | Validate; open client; delete same named collection first. | Idempotent rebuild, avoids duplicates/stale records. |
-| 63-77 metadata + `create_collection(...)` | Store embedding model/dimension/cosine; `embedding_function=None` prevents hidden embedding model. | Makes first-principles mechanism visible. |
-| 79-92 IDs/documents/metadatas | Convert each chunk into parallel Chroma fields; optional document ID retained. |
-| 94-99 `collection.upsert(ids=..., documents=..., metadatas=..., embeddings=...)` | Exact vector DB write. Input aligned records/vectors; output persisted collection. |
-| 100-102 count check | Verify exactly one DB record per chunk. |
-| 105-126 `load_chroma_collection` | Load without embedding function and validate model, cosine config, non-empty count. | Prevent querying incompatible/stale index. |
-| 129-130 `load_static_collection` | Binds generic loader to static path/name. |
+| 16-22 | `chromadb.PersistentClient(path=..., telemetry=False)`. | Local persistent DB creation. |
+| 32-47 | Validate chunk count, 2D rows, finite values and normalized vectors. | Enforces one vector row per chunk. |
+| 50-61 | Delete existing named collection before rebuild. | Re-index is idempotent, not append/duplicate. |
+| 63-77 | Store model/dimension/cosine metadata; create with `embedding_function=None`. | Chroma cannot hide or select an embedder. |
+| 79-92 | Build IDs, document texts and metadata including source and optional document ID. | Source identity is persisted. |
+| 94-102 | Explicit `collection.upsert(... embeddings=embeddings.tolist())`; verify count. | Exact vector database write. |
+| 105-126 | Load and validate model, cosine configuration and non-empty collection. | Prevent incompatible/stale index use. |
+| 129-130 | Load static collection from `storage/chroma`. | Static path stays separate from uploads. |
 
-### FILE: `build_index.py`
+### 6.2 Static index
 
-**Purpose:** Build static `knowledge/*.txt` collection reproducibly.
+`build_index.py:20-65` performs visible `load_documents → chunk_documents → embed_texts → alignment check → normalize_embeddings → rebuild_chroma_collection`. The collection metadata marks `index_kind=static_knowledge` at line 64.
 
-| Lines / snippet | Giải thích và flow | Why/break/question |
-|---|---|---|
-| 1-14 imports | Pull one config and shared load/chunk/embed/store functions. |
-| 20-24 load | `load_documents(KNOWLEDGE_DIR)`; fail empty. |
-| 26-34 chunk | `chunk_documents(...180,30)`; fail empty. |
-| 36-48 embed/alignment | List texts → `embed_texts`; assert rows equal chunks. |
-| 50-56 normalize/inspect | Normalize and print norm range. |
-| 58-74 rebuild | `rebuild_chroma_collection(CHROMA_DIR, STATIC_CHROMA_COLLECTION, ...)`; marks `index_kind=static_knowledge`; prints IDs. |
+### 6.3 Per-upload indexes
 
-### FILE: `src/documents/indexer.py`
+`indexer.py:26-27` resolves `uploads/<document_id>/chroma`. `index_uploaded_document` at lines 30-73 re-extracts, creates `document_id`/source-aware records, uses the shared chunker/embedder, and rebuilds one collection. `load_uploaded_collection` lines 76-93 validates collection identity and chunk count.
 
-**Purpose:** Build/load exactly one uploaded document's isolated Chroma database.
+Separate physical indexes make per-document isolation and rebuilding easy to explain. Multi-file retrieval combines results at request time; it does not create another combined persistent index.
 
-| Lines / snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 1-19 imports | Reuses extractor, chunker, embedder, generic Chroma adapter and safe storage. |
-| 22-23 `DocumentIndexError` | Controlled index-domain error. |
-| 26-27 `uploaded_chroma_directory` | Validated document directory + `/chroma`; physical per-document isolation. |
-| 30-44 extract/document/chunk | Metadata + original path → re-extract text → dict with `document_id`/ID prefix → shared chunker; reject no chunks. |
-| 46-59 embed/rebuild | `embed_texts` → normalize → generic Chroma rebuild with uploaded collection metadata and document ID. |
-| 63-73 metadata update | Status indexed, count/model/dimension/database/collection. Output metadata to API. |
-| 76-93 `load_uploaded_collection` | Load metadata + its Chroma; verify collection `document_id` and count. | Detect wrong/corrupt index before retrieval. |
+## 7. Retrieval, cosine similarity and GLOBAL Top-K
 
-## 9. RAG retrieval / Top-K
+### 7.1 Generic Chroma query
 
-### FILE: `src/vector_store.py` (query blocks)
-
-| Lines / exact snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 133-143 `embed_query` | Validate question; `embed_texts([query])[0]`; check stored dimension; reshape/normalize; output one vector. | Documents/query must share vector space and dimension. |
-| 146-171 `query_chroma_collection` setup | Validate `top_k`; read dimension; embed query; construct explicit `query_embeddings`, bounded `n_results`, returned fields, optional `where`; call `collection.query(**query_arguments)`. | Exact Chroma query; Chroma does not embed secretly. |
-| 173-178 aligned response check | Extract first query's ids/docs/metadata/distances and require equal lengths. |
-| 181-205 result mapping | Rank in Chroma order; reject nonfinite distance; compute `similarity = 1.0 - distance`; preserve `score` compatibility and metadata. | Top-K means highest similarity/lowest distance among this collection. |
-| 208-231 `get_collection_records` | Inspection-only `collection.get`; optionally reconstruct float32 vectors. Not used for retrieval. |
-| 234-239 `search` | Static convenience wrapper: load static collection, query it, return `(query_vector, results)`. |
-
-### FILE: `src/documents/retriever.py`
-
-**Purpose:** Uploaded-document retrieval with model/dimension/document isolation checks.
-
-| Lines / snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 1-6 imports | Same configured embedding/Top-K; uses uploaded loader and generic Chroma query. |
-| 9-10 `DocumentNotIndexedError` | Allows API to return HTTP 409. |
-| 13-27 status/model checks | Input ID+question+K; require `status=indexed` and same `EMBEDDING_MODEL`. | Prevent query against absent/incompatible vectors. |
-| 29-35 load/dimension check | Metadata and Chroma collection must agree. |
-| 37-41 K validation | Reject bool/non-int/nonpositive; cap at collection size. |
-| 42-48 query with `where={"document_id": document_id}` | Query only the loaded document DB plus metadata filter. | Two isolation layers: separate path + filter. |
-| 49-58 result identity/return | Require results and verify every `document_id`; return metadata, query vector, Top-K. | Stops cross-document leakage. |
-
-Top-K **luôn trả về các record gần nhất nếu collection có record**, kể cả tất cả đều không liên quan. Vì vậy Top-K là ranking, không phải proof of answerability; relevance gate ở section 10 xử lý bước tiếp theo.
-
-## 10. Relevance gate and answerability
-
-### FILE: `src/documents/question_answering.py`
-
-**Purpose:** Uploaded-document RAG orchestrator; separates retrieval gate, generation execution, and final answerability.
-
-| Lines / exact snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 1-9 imports | Threshold/K, uploaded retriever, provider-neutral generator, prompt/refusal. |
-| 12-16 `UPLOADED_THRESHOLD_NOTE` | Explicitly says 0.30 is static-corpus educational heuristic and uploads may need recalibration. |
-| 19-27 retrieve/highest/gate | Input ID/question/K; retrieve; top score; `retrieval_gate_passed = highest_similarity >= MIN_SIMILARITY`. | Gate happens **before** model call. |
-| 29-32 defaults | Empty prompt/context and `generation_called=False` make skipped generation observable. |
-| 33-41 branch | Passed: build labelled prompt then `generate_answer`, set true. Failed: exact refusal, no model call. | Prevents model guessing on weak retrieval. |
-| 43-45 `answerable = answer != INSUFFICIENT_INFORMATION_MESSAGE` | Even after gate, grounded generator can refuse. Gate pass ≠ answer found. |
-| 47-61 return dict | Combines retrieval, flags, prompt/context and answer for CLI/API. `sufficient_context` is compatibility alias of gate. |
-
-### Static CLI gate (`ask.py`)
-
-- Lines 41-42: compute `highest_similarity` and threshold boolean.
-- Lines 51-54: failed gate prints exact refusal and returns before prompt/generation.
-- Lines 56-77: only a passed gate builds context and calls generator.
-
-### Ba khái niệm phải nói đúng
-
-- `retrieval_gate_passed`: score Top-1 đạt heuristic 0.30.
-- `generation_called`: code thật sự đã gọi provider; false khi gate fail.
-- `answerable`: final answer khác exact refusal; generator vẫn có quyền từ chối sau gate.
-- False positive: irrelevant Top-1 vẫn ≥0.30 → model được gọi không cần thiết/có nguy cơ trả sai.
-- False negative: relevant Top-1 <0.30 → hệ thống từ chối dù tài liệu có câu trả lời.
-
-## 11. Prompt construction
-
-### FILE: `src/prompt_builder.py`
-
-**Purpose:** Turn raw retrieved chunks into untrusted labelled data and strict grounded messages.
-
-| Lines / exact snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 1-3 `INSUFFICIENT_INFORMATION_MESSAGE` | Một exact refusal dùng chung gate và generator check. |
-| 6-17 `SYSTEM_INSTRUCTION` | Static KB rules: context-only, no outside knowledge, documents are data/not instructions, exact chunk citations each factual paragraph, exact refusal. | Grounding + prompt-injection defense. |
-| 20-33 uploaded system instruction | Same rules but requires full document-scoped chunk ID. | Prevent ambiguous `[chunk-001]` across uploads. |
-| 36-45 `_build_labelled_prompt` validation | Input question/chunks/system flag; reject empty/missing. |
-| 47-65 label loop | Validate `chunk_id/text`; uploaded also source; sanitize CR/LF/`]` in filename; context exact format `[SOURCE label]\ntext`. | Retrieved text remains data; labels trace evidence. |
-| 61-62 uploaded label/citations | Display source + full chunk ID; permitted answer citation is only `[document_id#chunk-NNN]`. |
-| 67-83 context/user message/return | Join blocks; list valid uploaded citations; add question and citation command; output `(context, system, user)`. Caller passes last two to generator. |
-| 86-95 `build_grounded_prompt` | Static wrapper chooses static instruction. |
-| 98-108 `build_uploaded_document_prompt` | Uploaded wrapper chooses uploaded instruction/labels. |
-
-“Citations are enforced” ở đây nghĩa là **prompt requires them**; static evaluation (`evaluate_rag.py:157-217`) validates citations after generation. Production API does not run a deterministic post-generation citation validator, nên model vẫn probabilistic.
-
-## 12. LLM generation
-
-### FILE: `src/generator.py`
-
-**Purpose:** Provider-neutral RAG generation boundary. Retrieval is intentionally absent.
-
-| Lines / snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 1-10 imports | Official Ollama and Google GenAI clients plus provider/model/key config. |
-| 13-14 `GenerationConfigurationError` | Controlled config failure; API maps to safe status where applicable. |
-| 17-34 `_generate_with_ollama` | Validate model; call `ollama.chat` with system/user, temperature .1, context 4096, max 512; output stripped text. | Conservative grounded QA. |
-| 37-55 `_generate_with_gemini` | Require key/model; scoped `genai.Client`; `generate_content` with same system/user intent/temp/max; output stripped text. | Key stays backend. |
-| 58-74 `generate_answer` | Validate prompts; branch exact `LLM_PROVIDER`; no fallback; reject unknown/empty output; return answer. | One switch point means retrieval/index unchanged. |
-
-## 13. Ollama/Qwen
-
-### RAG role
-
-- Config: `config.py:21-24` selects `qwen3:4b-instruct` by default for Ollama RAG generation.
-- Inference: `src/generator.py:22-33` calls local `ollama.chat` after retrieval/gate/prompt.
-- Input: two messages containing rules and retrieved context/question. Output: cited natural-language answer.
-- It does **not** search Chroma, extract documents, calculate similarity, or validate upload paths.
-
-### Agent role
-
-- Config: `config.py:28-29` fixes `GENERATION_MODEL = DEFAULT_QWEN_MODEL`.
-- Inference/tool decision: `src/agent/agent_loop.py:83-92` calls `ollama.chat(... tools=OLLAMA_TOOL_SCHEMAS)`.
-- Qwen may output final text or structured `tool_calls`; Python, not Qwen, validates and executes.
-- `LLM_PROVIDER=gemini` does not affect this Agent path.
-
-## 14. Gemini
-
-- Responsibility: optional **RAG answer generation only** after the same all-minilm/Chroma retrieval and same grounded prompt.
-- Runs: Google cloud through `google-genai`; unlike default Ollama, it requires network/API key.
-- Config read: `config.py:20,25-26`; current default is `gemini-3.5-flash`.
-- Client/inference: `src/generator.py:45-54`; `genai.Client(api_key=...)` then `client.models.generate_content(...)`.
-- It does not control Agent tools. `/chat` still calls `run_agent_with_metadata` and Qwen.
-- Exact switch point: `generate_answer`, lines 63-66. Everything before that call is identical for Qwen/Gemini.
-
-## 15. Static knowledge RAG
-
-### FILE: `src/document_loader.py`
-
-**Purpose:** Load only repository `knowledge/*.txt` into deterministic document records.
-
-| Lines / snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 4-9 `_extract_title` | First non-empty line stripped of leading `#`, else filename stem. |
-| 12-15 `load_documents` guard | Input `Path`; require directory. Called `build_index`/inspection. |
-| 17-31 sorted glob/read/append | Sorted filename order; UTF-8; skip empty; output path/source/title/text/word_count. | Stable order and source traceability. |
-| 33 return | List goes next to `chunk_documents`. |
-
-### Static build and query
-
-1. `build_index.py:20-65`: knowledge files → shared chunks → all-minilm → normalized matrix → `static_knowledge` Chroma.
-2. `src/vector_store.py:129-130`: load static collection.
-3. `src/vector_store.py:234-239`: static `search(query,K)`.
-4. Standalone: `ask.py:27` → gate → prompt → provider.
-5. Agent tool: `knowledge_tool.py:30` calls the same `search`; it returns retrieval only.
-
-## 16. Uploaded-document RAG
-
-### Lifecycle
-
-```text
-POST upload → uploads/<uuid>/original.ext + metadata(status=extracted)
-POST index  → re-extract → chunks → vectors → uploads/<uuid>/chroma
-             → metadata(status=indexed, model, dimension, count)
-POST ask    → load only that directory/collection + document_id filter
-             → query vector → Top-K → gate → prompt → configured RAG provider
-```
-
-### Why separate from static KB
-
-- Static KB is curated homework knowledge; uploads are user-specific, dynamic and potentially untrusted.
-- Separate persistence makes deletion/rebuild/isolation understandable and avoids polluting static evaluation.
-- Same extractor/chunker/embedder/vector adapter proves one reusable RAG mechanism; only source and storage scope differ.
-- Re-indexing deletes/recreates the deterministic per-document collection (`vector_store.py:60-61`), so it is idempotent rather than append/duplicate.
-
-### Core package facade
-
-`src/documents/__init__.py:1-32` exposes only public storage/extraction functions/errors. `src/api/app.py` imports this facade; index/retriever/QA modules remain explicit because they represent later pipeline phases.
-
-## 17. Agent loop
-
-### FILE: `src/agent/agent_loop.py`
-
-**Purpose:** One visible, bounded Model → Tool Call → Python → Observation → Model loop.
-
-| Lines / exact snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 1-9 imports | JSON for visible observations; dataclass result; Ollama; fixed Agent model; registry schemas/executor. |
-| 12 `MAX_STEPS = 5` | Hard bound on model turns, not number of individual calls inside one turn. | Prevent unbounded loop/cost. |
-| 14-30 `AGENT_SYSTEM_INSTRUCTION` | Tells Qwen when tools are mandatory, multi-tool completion, grounding/citations and outputs-as-data. | Guides probabilistic selection; Python still enforces allowlist. |
-| 32 `MAX_STEPS_MESSAGE` | Deterministic safe termination output. |
-| 35-39 `AgentRunResult` | Immutable result: answer, steps, ordered tools. API uses metadata; CLI can keep string API. |
-| 42-45 `_message_value` | Supports SDK objects or dicts. Input message/name; output field/default. |
-| 48-52 `_tool_call_parts` | Pull structured `function.name` and `arguments` from Qwen tool call. |
-| 55-60 `_assistant_message_for_history` | Convert model message to dict before appending; rejects unsupported type. | Tool-call message must be preserved in conversation. |
-| 63-75 `_run_agent` setup | Validate goal; create system+user messages; empty tools-used list. Called CLI/API/eval wrappers. |
-| 81-92 bounded loop and `chat_callable` | For each step call Qwen with full messages and `OLLAMA_TOOL_SCHEMAS`; low temp/settings. | Exact point model sees tool definitions. Injectable callable supports safety evaluation. |
-| 93-103 final-answer branch | Read `response.message.tool_calls`; if none, content is final answer; return result with current step/tools. | Agent need not call a tool for every goal. |
-| 105-115 tool-call branch | Append assistant tool-call message; parse each call; record name; `execute_tool(name,args)`. | Model proposes, Python executes only approved function. |
-| 116-127 observation serialization | Print validation and JSON result/error. Output is structured observation, not direct final answer. |
-| 128-134 `messages.append({"role":"tool",...})` | Feed observation back on next loop iteration. | Without it Qwen cannot use tool result. |
-| 136-142 exhaustion | After 5 turns return deterministic stop. |
-| 145-151 `run_agent` | Compatibility wrapper returns only answer for CLI/evaluation. |
-| 154-160 `run_agent_with_metadata` | Same loop returns dataclass for `/chat`; no duplicate Agent. |
-
-### FILE: `src/agent/__init__.py`
-
-**Purpose:** Lines 1-17 re-export Agent result, MAX_STEPS, registry/executor and two runner APIs. `src/api/app.py:6` imports the metadata runner here. Removing exports breaks public imports, not the loop algorithm.
-
-## 18. Tool registry
-
-### FILE: `src/agent/tool_registry.py`
-
-**Purpose:** Convert simple schemas for Ollama, validate model arguments, and dispatch only allowlisted Python functions.
-
-| Lines / snippet | Giải thích, I/O/caller/next | Why/break/question |
-|---|---|---|
-| 1-3 imports | Four normal tool functions + schemas. |
-| 6-11 `TOOL_REGISTRY` | Explicit name→callable allowlist. Unknown model name cannot resolve arbitrary Python. |
-| 13-16 `TOOL_SCHEMAS_BY_NAME` | Fast schema lookup during validation. |
-| 18-21 `OLLAMA_TOOL_SCHEMAS` | Wrap each function schema as Ollama `{"type":"function","function":...}`. Passed to Qwen. |
-| 24-35 `_matches_json_type` | Strict small JSON-type checker; notably bool is not accepted as integer/number. |
-| 38-62 `_validate_arguments` | Check required, reject extras, verify type/minimum. Input tool+dict; output none or exception. | Model output is untrusted. |
-| 65-81 `execute_tool` early branches | Unknown tool or non-object args return structured rejected observation. |
-| 83-91 schema failure | Catch validation errors; do not call function. |
-| 93-101 approved execution failure | `TOOL_REGISTRY[tool_name](**arguments)`; function error becomes `success:false`, validation still allowed. | Distinguishes bad permission/schema from runtime failure. |
-| 103-108 success | Return tool/result as JSON-ready observation. |
-
-## 19. Individual tools
-
-### FILE: `src/tools/knowledge_tool.py`
-
-**Purpose:** Expose static Chroma retrieval to Agent, with no generation.
-
-| Lines / snippet | Meaning / flow | Why/break/question |
-|---|---|---|
-| 1-2 imports | Same `TOP_K`, threshold and static `search`; no generator import. |
-| 5-25 `SEARCH_KNOWLEDGE_SCHEMA` | Qwen-visible name/description/query/top_k/minimum/no extra args. |
-| 28-47 `search_knowledge` | Calls `search(query,K)`; projects rank/score/ID/source/text; reports highest and heuristic sufficient context. | RAG retrieval becomes one tool; Agent Qwen writes final answer/citation from observation. |
-
-### FILE: `src/tools/calculator_tool.py`
-
-**Purpose:** Safe basic arithmetic without `eval`/`exec`.
-
-| Lines / snippet | Meaning / flow | Why/break/question |
-|---|---|---|
-| 1-2 imports `ast`, `operator` | Parse syntax tree and map only permitted operations. |
-| 5-22 schema | One required string `expression`; no extras. |
-| 25-36 operator maps/limits | Only +,-,*,/ and unary signs; max 200 chars/50 AST nodes. |
-| 39-58 `_calculate_node` | Recursively allow numeric constants, allowed binary/unary nodes; catch divide-by-zero; reject names/calls/attributes/power/import. |
-| 61-76 `calculator` | Validate string/length; `ast.parse(..., mode="eval")`; complexity guard; evaluate only `tree.body`. | `eval` would execute arbitrary code; AST walker cannot. |
-
-### FILE: `src/tools/file_tools.py`
-
-**Purpose:** Read-only, project-confined listing/UTF-8 reading.
-
-| Lines / snippet | Meaning / flow | Why/break/question |
-|---|---|---|
-| 6-36 two schemas | Qwen sees relative directory/path only; `read_file` requires path. |
-| 39-51 root/limits/extensions | Resolved trusted root; max 1,000,000 bytes; text allowlist. |
-| 54-70 `_resolve_project_path` | Reject empty, absolute/drive, literal `..`; resolve and require `relative_to(_PROJECT_ROOT)`. | Layered traversal/symlink escape defense. |
-| 73-85 `list_files` | Resolve; require directory; return only direct child file paths relative to project. No recursive exposure/write. |
-| 88-108 `read_file` | Resolve; require file + allowed extension + size; UTF-8 read or controlled error. No writes. |
-
-### FILE: `src/tools/__init__.py`
-
-**Purpose:** Lines 1-16 assemble exactly four schema objects in `TOOL_SCHEMAS`; lines 18-24 export only four functions plus schemas. Tool registry imports this facade. Removing one schema makes it invisible to Qwen even if function remains; removing export breaks registry import.
-
-## 20. Evaluation / verification
-
-### FILE: `evaluate_rag.py`
-
-**Purpose:** Seven-question retrieval/generation evaluation with score calibration and deterministic citation checks.
-
-| Lines / snippet | Meaning / verification | Lecturer angle |
-|---|---|---|
-| 22-29 path/loader | Loads `tests/test_questions.json`, requires non-empty list. |
-| 32-56 `collect_retrieval_results` | Runs static `search` for every test; records Top-1, Top-3 sources and expected-source presence. |
-| 86-118 score ranges | Separates answerable/unanswerable observed Top-1 ranges and reports whether gap is clean. |
-| 121-154 threshold calibration | Checks 0.30 lies inside observed gap; explicitly calls it corpus/test heuristic. |
-| 157-158 `extract_citations` | Regex accepts only static `.txt#chunk-NNN` format. |
-| 161-188 final runs | Applies threshold before provider generation; false cases use exact refusal. |
-| 190-217 citation/pass logic | Citations must exist, belong to retrieved IDs, and answerable tests cite expected source. |
-| 223-228 unanswerable pass | Requires gate fail, generation not called and exact refusal. |
-| 275-302 summary | Reads Chroma records and prints docs/chunks/model/dimension/provider/pass counts. |
-| 305-317 main | Runs collection → calibration → final pipeline → tables → summary. |
-
-### FILE: `tests/test_questions.json`
-
-- Lines 2-25: tests A-D are answerable, including semantic paraphrase D; expected source recorded.
-- Lines 26-43: tests E-G are intentionally unanswerable (tuition 2027, FIFA 2030, current Melbourne weather) with `expected_source: null`.
-- Đây là evaluation data, không phải pytest unit tests và không được đưa vào knowledge base.
-
-### FILE: `evaluate_agent.py`
-
-**Purpose:** Execute six real Agent scenarios and four controlled safety checks.
-
-| Lines / snippet | Meaning / verification |
+| `src/vector_store.py` lines | Current mechanism |
 |---|---|
-| 19-60 `SCENARIOS` | Knowledge, arithmetic, listing, reading, multi-tool, direct answer; exact expected tool sequence. |
-| 63-74 citation checker | Final Agent citations must be subset of IDs actually observed from search tool. |
-| 77-106 scenario pass logic | Requires exact tools, final answer, successful events; case-specific result checks. |
-| 109-152 `run_scenario` | Wrap real Ollama call, patch executor only to record events, capture transcript, call shared `run_agent`. |
-| 172-248 safety checks | Unknown tool, invalid power operator, traversal, repeated unknown calls to prove MAX_STEPS. |
-| 266-297 main | Runs scenarios/checks, prints summary, exits nonzero on failure. |
+| 133-143 | Validate, embed and L2-normalize one question vector; verify expected dimension. |
+| 146-163 | Convenience query embeds text then delegates to the shared-vector function. |
+| 166-190 | Validate precomputed vector for multi-document reuse. |
+| 192-199 | Send explicit `query_embeddings`, bounded `n_results`, fields and optional metadata filter to `collection.query`. |
+| 201-206 | Require aligned returned IDs/documents/metadata/distances. |
+| 208-233 | Convert cosine distance using `similarity = 1.0 - distance`; preserve rank, source, text, ranges and document ID. |
+| 262-267 | Static `search` loads only `static_knowledge` then uses the same query path. |
 
-### Inspection/support scripts (reviewed, not core behavior)
+### 7.2 Single-document compatibility
 
-| File | What it verifies |
+`retrieve_uploaded_document` remains at `retriever.py:17-62`. It validates indexed/model/dimension state, queries the one physical collection with `where={"document_id": document_id}`, then verifies returned identities. The legacy UI no longer uses this path, but CLI and `POST /documents/{id}/ask` remain compatible.
+
+### 7.3 Multi-document retrieval
+
+| `src/documents/retriever.py` lines | Exact behavior |
 |---|---|
-| `inspect_chunks.py:6-56` | Documents, word counts, chunk IDs/ranges/overlap/full text and totals. |
-| `inspect_embeddings.py:7-55` | Chroma count/dimension/dtype, first vectors and norms, one vector per chunk. |
-| `inspect_retrieval.py:10-74` | Query vector, **all** Chroma scores, Top-K full chunks and 1-distance explanation. |
-| `inspect_tools.py:12-65` | All schemas/tools, unsafe AST rejection and path traversal rejection. |
-| `inspect_document.py:7-28` | Extract local TXT/PDF/DOCX and show first 500 chars. |
-| `inspect_uploaded_index.py:10-56` | Per-upload Chroma metadata, first three vectors/chunks, row count and norm≈1. |
+| 65-80 | Validate non-empty ID list, string IDs, no duplicates and positive integer K. |
+| 82-110 | Loop through every selected ID; require indexed state, same embedding model/dimension; load its collection. |
+| 114 | Embed the question **once** after all dimensions agree. |
+| 116-124 | Query each selected collection with the same query vector and up to K candidates. |
+| 125-132 | Recheck document identity then merge with `candidates.extend(document_candidates)`. |
+| 137 | Sort all merged candidates descending by `score`. |
+| 138-140 | `top_results = candidates[:top_k]`; reset final global ranks. |
+| 142-147 | Return metadata, one query vector, candidate count and final results. |
 
-### Dependency and ignored-artifact audit
+`TOP_K = 3` means at most **three final chunks total**, not three chunks per file in the prompt. Internally the code may retrieve up to three candidates from each separate collection so they can compete in one global ranking.
 
-- `requirements.txt:2-10`: all nine packages have a legitimate code/runtime role; no clearly unused dependency found.
-- `.gitignore:1-13`: ignores venv, secrets `.env`, caches, frontend dependencies/build, upload data and `storage/chroma`; keeps `.gitkeep` markers.
-- No active code reads/writes `chunks.json` or `embeddings.npy`; no active manual `embeddings @ query_vector` path.
-- NumPy remains necessary in `src/embedder.py`, `src/vector_store.py`, build/inspection CLIs.
+Top-K always returns the nearest available records even when all are irrelevant. Therefore ranking is not proof of answerability; the relevance gate is separate.
 
-## 21. End-to-end request flows
+### 7.4 Source identity after merge
 
-### Flow 1 — Uploaded PDF → extraction → chunking → embedding → Chroma
+1. Indexer copies original filename to `source` at `indexer.py:36-40`.
+2. Chroma metadata stores `source` and `document_id` at `vector_store.py:83-92`.
+3. Query mapping restores both at `vector_store.py:217-232`.
+4. Candidate merge retains entire result dict at `retriever.py:132`.
+5. Prompt label becomes `[SOURCE filename | document_id#chunk-NNN]` at `prompt_builder.py:55-65`.
 
-1. React `prepareDocument` (`App.jsx:193-206`) calls `uploadDocument` then `indexDocument`.
-2. `uploadDocument` (`documentApi.js:26-38`) sends multipart to `upload_document` (`app.py:77`).
-3. API reads at most `MAX_UPLOAD_BYTES + 1` (`app.py:82`) and calls `create_document` (`app.py:83`).
-4. `create_document` (`storage.py:48-88`) creates UUID folder, writes `original.pdf`, then calls `extract_text`.
-5. `extract_text` (`extractor.py:73-82`) dispatches `.pdf` to `extract_pdf_text`; `PdfReader` and page extraction are lines 42-53.
-6. React then POSTs `/index`; `index_document` (`app.py:130-146`) calls `index_uploaded_document`.
-7. Indexer reopens safe original and re-extracts (`indexer.py:32-34`), builds a document record with ID prefix (`36-41`), then calls shared `chunk_document` (`42`).
-8. Chunk texts go to `embed_texts` and `normalize_embeddings` (`indexer.py:46-49`); exact Ollama embedding is `embedder.py:14`.
-9. `rebuild_chroma_collection` (`indexer.py:50-59`) opens `uploads/<id>/chroma`, creates cosine collection and upserts explicit chunks/vectors (`vector_store.py:50-102`).
-10. Metadata becomes `indexed` with count/model/dimension (`indexer.py:63-73`). Đây là indexing, không phải training.
+## 8. Prompt construction and grounded generation
 
-### Flow 2 — Document question → Qwen → cited answer
+### 8.1 Relevance gate: `src/documents/question_answering.py`
 
-1. `App.sendMessage` snapshots active doc and calls `askDocument` (`App.jsx:132-146`).
-2. HTTP POST reaches `ask_indexed_document` (`app.py:149-158`) then `answer_uploaded_document`.
-3. QA calls `retrieve_uploaded_document` (`question_answering.py:24`). Retriever verifies status/model/dimension and loads exactly that per-ID collection.
-4. `query_chroma_collection` embeds question with all-minilm (`vector_store.py:162`), sends explicit vector and `where document_id` to Chroma (`retriever.py:42-48`; `vector_store.py:164-171`).
-5. Chroma distance becomes similarity `1-distance` and ordered Top-K records (`vector_store.py:181-205`).
-6. QA takes Top-1 and checks `>= 0.30` (`question_answering.py:25-27`). Failure skips all generation.
-7. Pass calls `build_uploaded_document_prompt` (`34-37`), which creates `[SOURCE filename | document_id#chunk-NNN]` blocks.
-8. `generate_answer` branches to Ollama by default (`generator.py:63-64`); `_generate_with_ollama` calls Qwen (`22-33`).
-9. Text returns at `question_answering.py:38`; `answerable` compares it with exact refusal (`45`).
-10. API returns answer plus retrieval flags/IDs (`app.py:174-202`); React renders answer and evidence (`App.jsx:147-156`, `32-70`).
+| Lines | Meaning |
+|---|---|
+| 15-19 | Documents that 0.30 is an educational heuristic calibrated on static data. |
+| 22-28 | Single-document compatibility wrapper. |
+| 31-37 | Multi-document wrapper calls merged retriever. |
+| 40-46 | Shared QA gets final results and gates on the highest globally ranked score. |
+| 48-60 | Gate pass builds prompt/calls generation; gate fail returns exact refusal without provider call. |
+| 62-64 | Even after gate pass, generator may return exact refusal; that makes `answerable=False`. |
+| 66-80 | Return retrieval data, threshold, gate, generation flag, prompt/context and answer. |
 
-### Flow 3 — Same document question with Gemini provider
+Ba flag phải nói đúng:
 
-Steps 1-7 above are **identical**: same upload, all-minilm query vector, same Chroma, Top-K, gate and prompt. Only at `generate_answer` (`generator.py:63-66`) does `LLM_PROVIDER == "gemini"` select `_generate_with_gemini` instead of Ollama. That function creates `genai.Client` and calls `generate_content` (`45-54`) using the configured `gemini-3.5-flash` default. The Agent is not involved and does not switch to Gemini.
+- `retrieval_gate_passed`: highest global score ≥ `MIN_SIMILARITY`.
+- `generation_called`: provider thực sự được gọi; false khi gate fail.
+- `answerable`: final output khác exact insufficient-information sentence.
 
-### Flow 4 — General “Calculate 10 * 25”
+### 8.2 Prompt builder: `src/prompt_builder.py`
 
-1. No active document → `App.jsx:157-169` calls `sendChatMessage` → `/chat`.
-2. `app.py:54-69` calls `run_agent_with_metadata`, which calls shared `_run_agent`.
-3. Qwen receives messages + schemas at `agent_loop.py:83-92`; calculator instruction forces a tool result.
-4. Qwen returns structured tool call; code reads `tool_calls` (`93-94`) and parses name/arguments (`108-110`).
-5. `execute_tool` (`115`) checks name against `TOOL_REGISTRY`, validates schema, then calls `calculator(expression="10 * 25")` (`tool_registry.py:65-108`).
-6. Calculator parses restricted AST and returns `250` (`calculator_tool.py:61-76`).
-7. Result is JSON observation (`agent_loop.py:119-126`), appended with role `tool` (`128-134`).
-8. Next loop sends all messages to Qwen again; with result 250, Qwen returns final content branch (`96-103`).
-9. API returns answer/steps/tools; React renders `Tools used: calculator`.
+| Lines | Current behavior |
+|---|---|
+| 1-3 | One exact insufficient-information response shared by gate/model checks. |
+| 6-17 | Static grounding rules: context-only, retrieved text is data, exact citations/refusal. |
+| 20-33 | Uploaded rules require full document-scoped chunk IDs and treat all uploaded texts as untrusted data. |
+| 36-45 | Validate non-empty question/chunks. |
+| 47-65 | Sanitize filename label; preserve source and chunk ID; construct labelled blocks. |
+| 67-83 | Join context, list valid uploaded citation IDs and build user message. |
+| 86-95 | Static wrapper. |
+| 98-108 | Uploaded Knowledge Base wrapper. |
 
-### Flow 5 — General request requiring static knowledge
+Grounding is an instruction plus labelled evidence, not a mathematical guarantee. Production API does not deterministically reject a malformed citation after generation; `evaluate_rag.py` does validate citations for the static test suite.
 
-1. `/chat` enters same Qwen loop.
-2. Qwen sees `search_knowledge` schema and selects it.
-3. Registry executes `knowledge_tool.search_knowledge` (`knowledge_tool.py:28-47`).
-4. Tool calls static `vector_store.search` (`line 30`), which loads `storage/chroma/static_knowledge` and performs all-minilm + Chroma Top-K.
-5. Tool returns chunk texts/IDs/scores/highest/gate only—no RAG generator call.
-6. Structured observation returns to Qwen. Agent instruction requires exact observed chunk ID citation (`agent_loop.py:24-29`).
-7. Qwen generates final Agent answer from observation. This is “RAG as a tool”: retrieval is a tool, while Agent Qwen performs the final generation.
+### 8.3 Generator boundary
 
-### Terminology check for this repository
+`generator.py` does not retrieve anything. It accepts only prepared system/user messages. Ollama implementation is lines 17-34; Gemini implementation lines 37-55; provider branch lines 58-70. A correct-sounding answer unsupported by final context is still a RAG failure.
 
-| Term | Exact meaning here | Code evidence |
+## 9. RAG verification and unanswerable behavior
+
+### 9.1 Static evaluation: `evaluate_rag.py`
+
+| Lines | Verification |
+|---|---|
+| 25-29 | Load non-empty `tests/test_questions.json`. |
+| 32-56 | Run static Chroma retrieval and record Top-1/Top-3/expected-source presence. |
+| 86-118 | Print answerable/unanswerable score ranges and separation. |
+| 121-154 | Explain why 0.30 is a corpus/test heuristic. |
+| 157-158 | Extract only valid static citation shape. |
+| 161-188 | Apply threshold before provider generation. |
+| 190-240 | Validate citations, expected source and unanswerable refusal behavior. |
+| 275-302 | Print Chroma/model/provider/pass summary. |
+
+`tests/test_questions.json:2-25` contains four answerable cases; lines 26-43 contain three intentionally unanswerable cases. This is evaluation data, not training data.
+
+### 9.2 Failure vocabulary
+
+- False positive: irrelevant highest score still reaches 0.30, so generation runs on weak evidence.
+- False negative: relevant evidence scores below 0.30, so generation is skipped.
+- Retrieval failure: relevant chunk is absent from final Top-K or gate fails.
+- Generation failure: evidence is correct but model answers incorrectly, omits/changes citation or refuses incorrectly.
+- Threshold is not a probability or universal confidence score.
+
+### 9.3 Inspection scripts
+
+| Script / current lines | Visible evidence |
+|---|---|
+| `inspect_chunks.py:6-56` | Static documents, ranges, overlap, full chunks and totals. |
+| `inspect_embeddings.py:7-55` | Chroma count/dimension/dtype, first values, norms and one-vector-per-chunk check. |
+| `inspect_retrieval.py:14-74` | Query vector, all Chroma scores, Top-K full chunks and distance/similarity explanation. |
+| `inspect_document.py:7-28` | Extraction metadata/preview for any currently supported extension, including MD. |
+| `inspect_uploaded_index.py:10-56` | Per-upload Chroma metadata, chunks/vectors and normalization. |
+
+## 10. Agent and tools
+
+### 10.1 Agent loop: `src/agent/agent_loop.py`
+
+| Lines | Mechanism |
+|---|---|
+| 12 | `MAX_STEPS = 5`. |
+| 14-30 | System rules for tool use, multi-tool completion, search grounding and citations. |
+| 35-39 | Immutable result with answer, step count and ordered tools. |
+| 63-75 | Validate goal and initialize system/user conversation. |
+| 81-92 | Bounded loop; Qwen receives messages plus Ollama tool schemas. |
+| 93-103 | No tool calls means final answer; direct answers are allowed. |
+| 105-115 | Parse proposed calls and pass each to Python dispatcher. |
+| 116-134 | Serialize validation/result/error and append `role="tool"` observation. |
+| 136-142 | Deterministic safe stop after exhausted steps. |
+| 145-160 | CLI string wrapper and API metadata wrapper reuse the same loop. |
+
+### 10.2 Registry and validation: `src/agent/tool_registry.py`
+
+- Allowlisted mapping is lines 6-11.
+- Ollama function schema wrapper is lines 18-21.
+- JSON type/required/extra/minimum validation is lines 24-62.
+- Unknown names/non-object arguments are rejected at lines 65-81.
+- Validated callable execution is lines 83-108.
+
+The model proposes a name and arguments; Python validates and executes. Qwen never directly executes Python or shell commands.
+
+### 10.3 Four tools
+
+| Tool | Current code | Responsibility and safety |
 |---|---|---|
-| Training | Updating model weights from examples. **This project performs none.** | No optimizer/backprop/fine-tuning code or training dependency. |
-| Inference | Running an already-trained model. | `ollama.embed`, `ollama.chat`, Gemini `generate_content`. |
-| Chunking | Splitting extracted text into overlapping 180-word windows. | `chunker.py:1-40`. |
-| Embedding | Mapping each chunk/question to a numeric semantic vector (384 dimensions observed for all-minilm). | `embedder.py:7-31`. |
-| Indexing | Pairing chunks/metadata with normalized vectors and storing them in Chroma. | `vector_store.py:50-102`. |
-| Retrieval | Embed question and ask Chroma for nearest Top-K chunks. | `vector_store.py:133-205`. |
-| Generation | Use Qwen/Gemini to write natural-language answer from labelled context. | `generator.py:17-74`. |
+| `search_knowledge` | `knowledge_tool.py:28-47` | Retrieval-only static sample search; no RAG generator. |
+| `calculator` | `calculator_tool.py:39-76` | Restricted AST for numbers, `+ - * /`, parentheses/unary signs; no `eval`/`exec`. |
+| `list_files` | `file_tools.py:73-85` | Direct child files only inside resolved project root. |
+| `read_file` | `file_tools.py:88-108` | Allowed extension, UTF-8 and 1 MB maximum; no writes. |
 
-Nếu giảng viên nói không chính xác “train the document”, hãy lịch sự nói: trong project này document **không retrain Qwen/Gemini**. Code thật là `extract → chunk → embed → index`; lúc hỏi là `embed query → retrieve → generate`.
+Tool schemas are assembled at `src/tools/__init__.py:11-16`. `evaluate_agent.py:19-60` defines six scenarios; lines 63-106 check citations/results; lines 109-152 record real runs; lines 172-248 verify unknown tool rejection, calculator rejection, traversal rejection and MAX_STEPS.
 
-### Model / database responsibility table
+Uploaded Knowledge Base retrieval is deliberately not a new Agent tool. General Agent `search_knowledge` still queries only sample static Chroma through `vector_store.search`.
 
-| Component | Responsibility | Runs where | Input → output | RAG / Agent role |
-|---|---|---|---|---|
-| `all-minilm:latest` | Semantic embedding only | Local Ollama | text(s) → 384-number vector(s) | Index chunks and embed queries; no answer generation, no Agent decisions. |
-| Chroma | Persist records/vectors and cosine nearest-neighbor query | Local filesystem (`storage/chroma` or per-upload `/chroma`) | explicit vectors+metadata → stored collection; query vector → distances/records | Vector database for static and uploaded RAG; no LLM. |
-| `qwen3:4b-instruct` | Natural language generation and native Agent tool selection | Local Ollama | messages/context/schemas → answer or structured tool calls | Default RAG generator; only Agent controller. |
-| `gemini-3.5-flash` | Optional cloud grounded answer generator | Google cloud through GenAI SDK | same RAG prompt → answer text | RAG generation only; never controls Agent. |
+## 11. Exact exam code locations
 
-### Exact 50 exam locations
-
-| # | File : current line(s) | Short exact snippet | One-sentence purpose |
-|---:|---|---|---|
-| 1 | `frontend/src/services/chatApi.js:4-11` | `fetch(CHAT_URL, ... body: JSON.stringify({ message }))` | React sends normal chat JSON to `/chat`. |
-| 2 | `frontend/src/services/documentApi.js:53-60` | ``fetch(`${API_BASE_URL}/documents/${encodeURIComponent(documentId)}/ask`, ...)`` | React sends one uploaded-document question. |
-| 3 | `src/api/app.py:54-57` | `@app.post("/chat"...); result = run_agent_with_metadata(...)` | FastAPI receives normal Agent chat. |
-| 4 | `src/api/app.py:72-83` | `@app.post("/documents/upload"...); metadata = create_document(...)` | FastAPI receives, bounds and stores one upload. |
-| 5 | `src/api/app.py:126-132` | `@app.post("/documents/{document_id}/index"...); index_uploaded_document(...)` | FastAPI starts per-document indexing. |
-| 6 | `src/api/app.py:149-158` | `@app.post("/documents/{document_id}/ask"...); answer_uploaded_document(...)` | FastAPI receives uploaded-document Q&A. |
-| 7 | `src/documents/extractor.py:31-39,42-53,56-70` | `extract_txt_text`; `extract_pdf_text`; `extract_docx_text` | Format-specific TXT/PDF/DOCX text extraction. |
-| 8 | `src/chunker.py:21-38` | `while start_word < len(words): ... start_word += step` | Builds overlapping word-window chunks. |
-| 9 | `config.py:15` | `CHUNK_SIZE_WORDS = 180` | Configures maximum full chunk size. |
-| 10 | `config.py:16` | `CHUNK_OVERLAP_WORDS = 30` | Configures shared boundary overlap. |
-| 11 | `config.py:18` | `EMBEDDING_MODEL = "all-minilm:latest"` | Selects document/query embedding model. |
-| 12 | `src/embedder.py:14` | `ollama.embed(model=EMBEDDING_MODEL, input=texts)` | Exact local embedding inference call. |
-| 13 | `src/embedder.py:40-47` | `normalized = (matrix / vector_lengths)...` | L2-normalizes and verifies vectors. |
-| 14 | `src/vector_store.py:16-22` | `chromadb.PersistentClient(path=..., settings=...)` | Opens local persistent Chroma. |
-| 15 | `src/vector_store.py:72-77` | `client.create_collection(... space: cosine ... embedding_function=None)` | Creates explicit cosine collection without hidden embedder. |
-| 16 | `src/vector_store.py:94-99` | `collection.upsert(... embeddings=embeddings.tolist())` | Exact Chroma write of aligned chunks/vectors. |
-| 17 | `src/vector_store.py:164-171` | `response = collection.query(**query_arguments)` | Exact Chroma Top-K query with explicit query vector. |
-| 18 | `config.py:31` | `TOP_K = 3` | Default retrieval count. |
-| 19 | `src/vector_store.py:187-194` | `similarity = 1.0 - distance; "score": similarity` | Converts Chroma cosine distance to project similarity. |
-| 20 | `src/documents/retriever.py:42-52` | `where={"document_id": document_id}` + identity check | Enforces uploaded-document isolation in addition to separate DB path. |
-| 21 | `config.py:32` | `MIN_SIMILARITY = 0.30` | Configures educational relevance gate. |
-| 22 | `src/documents/question_answering.py:25-27` | `retrieval_gate_passed = highest_similarity >= MIN_SIMILARITY` | Decides if retrieved evidence may reach an LLM. |
-| 23 | `src/documents/question_answering.py:32-39` | `generation_called = False ... generate_answer(...) ... True` | Records whether provider was actually invoked. |
-| 24 | `src/documents/question_answering.py:43-45` | `answerable = answer != INSUFFICIENT_INFORMATION_MESSAGE` | Distinguishes gate pass from final supported answer. |
-| 25 | `src/prompt_builder.py:49-67` | `context_blocks.append(f"[SOURCE {label}]\n{chunk['text']}")` | Turns Top-K chunks into labelled context. |
-| 26 | `src/prompt_builder.py:75-83` | `user_message = (... CONTEXT ... QUESTION ...)` | Constructs grounded user prompt and returns both messages. |
-| 27 | `config.py:20` | `LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")...` | Reads RAG generation-provider selection at startup. |
-| 28 | `config.py:21` | `DEFAULT_QWEN_MODEL = "qwen3:4b-instruct"` | Configures default Qwen model for RAG and Agent. |
-| 29 | `src/generator.py:22-33` | `response = ollama.chat(model=OLLAMA_GENERATION_MODEL, ...)` | Exact local RAG generation call. |
-| 30 | `config.py:25` | `GEMINI_MODEL = ... "gemini-3.5-flash"` | Configures the verified optional Gemini 3.5 Flash RAG generator. |
-| 31 | `config.py:26` | `GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()` | Reads cloud secret only from environment. |
-| 32 | `src/generator.py:45` | `with genai.Client(api_key=GEMINI_API_KEY) as client:` | Exact Gemini SDK client creation. |
-| 33 | `src/generator.py:46-54` | `client.models.generate_content(model=GEMINI_MODEL, ...)` | Exact Gemini inference call. |
-| 34 | `src/documents/question_answering.py:34-39` | `answer = generate_answer(system_message, user_message)` | Generated text returns into uploaded-document QA. |
-| 35 | `src/prompt_builder.py:26-31`; `evaluate_rag.py:190-217` | `Never invent a citation...`; `valid_citations = ...` | Prompt requires citations; evaluation deterministically validates static answers. |
-| 36 | `build_index.py:20-65` | `load_documents → chunk_documents → embed_texts → rebuild_chroma_collection` | Builds static knowledge base index. |
-| 37 | `src/vector_store.py:234-239` | `return query_chroma_collection(load_static_collection(), query, top_k)` | Queries static knowledge through shared Chroma path. |
-| 38 | `src/tools/knowledge_tool.py:28-47` | `def search_knowledge... _, top_results = search(...)` | Exposes retrieval-only static RAG to Agent. |
-| 39 | `src/tools/__init__.py:11-16` and tool files | `TOOL_SCHEMAS = [SEARCH_..., CALCULATOR_..., ...]` | Assembles four Qwen-visible function schemas. |
-| 40 | `src/agent/agent_loop.py:83-92` | `chat_callable(... tools=OLLAMA_TOOL_SCHEMAS, ...)` | Sends tool schemas and conversation to Qwen. |
-| 41 | `src/agent/agent_loop.py:93-94` | `model_message = response.message; tool_calls = ...` | Reads Qwen's structured tool-call response. |
-| 42 | `src/agent/tool_registry.py:65-91` | allowlist check + `_validate_arguments(...)` | Validates tool name and arguments before execution. |
-| 43 | `src/agent/tool_registry.py:93-95` | `result = TOOL_REGISTRY[tool_name](**arguments)` | Python executes only the approved callable. |
-| 44 | `src/agent/agent_loop.py:119-126` | `observation = json.dumps(tool_result, ...)` | Converts tool result/error into an observation. |
-| 45 | `src/agent/agent_loop.py:128-134` | `messages.append({"role":"tool", ... "content": observation})` | Sends observation back to Qwen on next loop iteration. |
-| 46 | `src/agent/agent_loop.py:81,136-142` | `for step in range(1, MAX_STEPS + 1)` | Enforces five-step bound and safe stop. |
-| 47 | `src/tools/calculator_tool.py:25-58,68-76` | allowed AST operator maps + `_calculate_node(tree.body)` | Rejects code/names/calls and safely evaluates only basic arithmetic. |
-| 48 | `src/tools/file_tools.py:54-70` | reject absolute/`..`; `resolved_path.relative_to(_PROJECT_ROOT)` | Prevents path traversal outside project. |
-| 49 | `tests/test_questions.json:2-25` | four `"type": "answerable"` cases | Supplies relevant/source/paraphrase RAG evaluation cases. |
-| 50 | `tests/test_questions.json:26-43` | three `"type": "unanswerable"` cases | Verifies threshold refusal on absent knowledge. |
-
-### Core runtime files reviewed
-
-33 core runtime/UI files were reviewed: six root config/entry pipelines; six frontend runtime/UI files; six shared RAG modules; two API modules; six document-package modules; three Agent modules; and four tool modules. Empty package markers `src/__init__.py` and `src/api/__init__.py` were also checked; they contain no runtime logic. Evaluation/inspection scripts, tests, README, final summary, dependencies and ignore rules were reviewed separately.
+| # | Current file : lines | Exact purpose |
+|---:|---|---|
+| 1 | `frontend/src/App.jsx:159-177` | `activeDocuments`/pending state, aggregate chunks and current mode. |
+| 2 | `frontend/src/App.jsx:211-228` | Snapshot active documents, collect ID array and call uploaded Knowledge Base API. |
+| 3 | `frontend/src/App.jsx:239-250` | Fallback to general `/chat` when active array is empty. |
+| 4 | `frontend/src/App.jsx:281-314` | Upload/index loop for multiple selected files. |
+| 5 | `frontend/src/App.jsx:324-338` | Convert multi-file input and validate every file. |
+| 6 | `frontend/src/App.jsx:340-346` | Detach one active document by filtering its ID. |
+| 7 | `frontend/src/App.jsx:351-357` | Detach all documents and restore empty active set. |
+| 8 | `frontend/src/App.jsx:518-545` | Render aggregate Knowledge Base plus per-document detachable chips. |
+| 9 | `frontend/src/App.jsx:567-575` | Exact multiple-file input and four accepted extensions. |
+| 10 | `frontend/src/App.jsx:88-128` | RAG evidence UI including filenames, chunk IDs, scores and gate flags. |
+| 11 | `frontend/src/services/chatApi.js:4-26` | Send/validate normal Agent `/chat` request. |
+| 12 | `frontend/src/services/documentApi.js:26-38` | Multipart upload for one selected file. |
+| 13 | `frontend/src/services/documentApi.js:41-50` | Trigger per-document indexing. |
+| 14 | `frontend/src/services/documentApi.js:53-69` | Preserved single-document ask client. |
+| 15 | `frontend/src/services/documentApi.js:72-85` | Send `document_ids` array and question to `POST /documents/ask`. |
+| 16 | `src/api/schemas.py:6-13` | General chat request/response contract. |
+| 17 | `src/api/schemas.py:16-38` | Safe upload/index metadata including MD file type. |
+| 18 | `src/api/schemas.py:41-46` | Non-empty question plus non-empty multi-document ID list schema. |
+| 19 | `src/api/schemas.py:49-57` | Safe retrieved chunk response retains source/document/chunk identity. |
+| 20 | `src/api/schemas.py:76-90` | Multi-document answer response contract. |
+| 21 | `src/api/app.py:59-74` | `/chat` delegates to shared Agent and returns observable metadata. |
+| 22 | `src/api/app.py:77-108` | Upload boundary, bounded read and controlled errors. |
+| 23 | `src/api/app.py:131-151` | Per-document index endpoint. |
+| 24 | `src/api/app.py:154-169` | Map internal retrieval records to safe HTTP chunk metadata. |
+| 25 | `src/api/app.py:172-215` | `POST /documents/ask`: receive ID list, run multi-doc QA and return flags/results. |
+| 26 | `src/api/app.py:218-259` | Preserved single-document endpoint. |
+| 27 | `src/documents/extractor.py:10,21-28` | Four-type allowlist and extension validation. |
+| 28 | `src/documents/extractor.py:31-52` | Shared UTF-8 TXT/MD extraction; MD is plain text. |
+| 29 | `src/documents/extractor.py:55-66` | Text-based PDF extraction and scanned-PDF refusal. |
+| 30 | `src/documents/extractor.py:69-83` | DOCX paragraph/table extraction. |
+| 31 | `src/documents/storage.py:25-36` | Safe filename and validated server-generated document directory. |
+| 32 | `src/documents/storage.py:48-88` | Store/extract one upload and preserve original filename metadata. |
+| 33 | `src/documents/indexer.py:30-59` | Re-extract, chunk, embed and rebuild one isolated upload index. |
+| 34 | `src/documents/indexer.py:63-73` | Mark document indexed with model/dimension/count. |
+| 35 | `src/chunker.py:21-38` | Exact overlapping word-window loop and metadata. |
+| 36 | `config.py:15-16` | Shared 180-word size and 30-word overlap. |
+| 37 | `src/embedder.py:7-31` | Exact all-minilm embedding request and float32 alignment checks. |
+| 38 | `src/embedder.py:34-48` | L2 normalization and verification. |
+| 39 | `src/vector_store.py:16-22` | Open persistent local Chroma client. |
+| 40 | `src/vector_store.py:50-77` | Replace/create explicit cosine collection with no hidden embedder. |
+| 41 | `src/vector_store.py:79-102` | Preserve source metadata and upsert explicit aligned vectors. |
+| 42 | `src/vector_store.py:133-143` | Embed/normalize one query and check dimension. |
+| 43 | `src/vector_store.py:166-199` | Query Chroma with one precomputed normalized vector. |
+| 44 | `src/vector_store.py:208-233` | Convert distance to similarity and reconstruct full retrieval records. |
+| 45 | `src/documents/retriever.py:65-114` | Validate/load all selected IDs and embed question once. |
+| 46 | `src/documents/retriever.py:116-132` | Query every active document and merge candidate records. |
+| 47 | `src/documents/retriever.py:137-140` | Global similarity sort, final `candidates[:top_k]`, final ranks. |
+| 48 | `src/documents/question_answering.py:31-46` | Multi-document QA wrapper and highest-global-score gate. |
+| 49 | `src/documents/question_answering.py:48-64` | Skip/call generation and distinguish answerability. |
+| 50 | `config.py:31-32` | `TOP_K = 3`; heuristic threshold `0.30`. |
+| 51 | `src/prompt_builder.py:20-33` | Uploaded grounding/citation/refusal system instruction. |
+| 52 | `src/prompt_builder.py:47-83` | Filename + document-scoped source labels and final grounded user prompt. |
+| 53 | `config.py:20-26` | RAG provider plus Qwen/Gemini 3.5 Flash configuration. |
+| 54 | `src/generator.py:17-34` | Exact local Qwen RAG inference. |
+| 55 | `src/generator.py:37-55` | Exact Gemini 3.5 Flash SDK inference path. |
+| 56 | `src/generator.py:58-70` | Single RAG generation-provider switch point. |
+| 57 | `src/agent/agent_loop.py:81-115` | Qwen decision, tool-call parsing and dispatch. |
+| 58 | `src/agent/tool_registry.py:65-108` | Tool allowlist, argument validation and Python execution. |
+| 59 | `src/agent/agent_loop.py:119-134` | Observation serialization and return to Qwen. |
+| 60 | `evaluate_rag.py:161-240` | Threshold-before-generation and deterministic static citation/pass checks. |
 
 ### Ten highest-priority oral-defense locations
 
-1. `frontend/src/App.jsx:125-170` — UI chooses Agent vs uploaded-document RAG.
-2. `src/api/app.py:54-69` — `/chat` delegates to the shared Agent.
-3. `src/api/app.py:149-202` — document Q&A boundary and safe response metadata.
-4. `src/embedder.py:7-48` — exact embedding inference and normalization.
-5. `src/vector_store.py:50-102` — Chroma collection rebuild/upsert.
-6. `src/vector_store.py:146-205` — exact Top-K query and distance→similarity.
-7. `src/documents/question_answering.py:19-60` — gate, generation-called and answerable semantics.
-8. `src/prompt_builder.py:36-108` — labelled context and grounding rules.
-9. `src/generator.py:17-74` — provider switch; exact Ollama/Gemini calls.
-10. `src/agent/agent_loop.py:81-142` — bounded tool-call/observation loop.
+1. `frontend/src/App.jsx:204-250` — unified UI route: active IDs versus `/chat`.
+2. `frontend/src/App.jsx:281-338` — multi-file validation/upload/index loop.
+3. `src/api/app.py:172-215` — multi-document HTTP boundary.
+4. `src/documents/retriever.py:65-147` — query each active index, merge and global Top-K.
+5. `src/embedder.py:7-48` — all-minilm inference and normalization.
+6. `src/vector_store.py:50-102,166-233` — Chroma upsert/query and distance conversion.
+7. `src/documents/question_answering.py:40-80` — gate/generation/answerability semantics.
+8. `src/prompt_builder.py:20-83` — uploaded context labels and grounding rules.
+9. `src/generator.py:17-70` — exact Qwen/Gemini calls and switch.
+10. `src/agent/agent_loop.py:81-142` — bounded Tool Call → Observation loop.
 
-### Project-specific exam question bank
+## Appendix A — Project-specific exam question bank
 
 **Q1. Vì sao không dùng LangChain/LlamaIndex?**
-A. Mục tiêu lab là nhìn thấy cơ chế. Loader/chunker/embedder/Chroma query/prompt/Agent loop đều hiện trực tiếp trong `src/`; không bị framework che.
+
+A. Mục tiêu lab là nhìn thấy trực tiếp extraction, chunking, embedding, Chroma query, prompt và Agent loop; framework sẽ che các cơ chế cần bảo vệ.
 
 **Q2. React làm gì và FastAPI làm gì?**
-A. React giữ UI state tạm và gọi HTTP (`App.jsx`). FastAPI validates schemas, maps errors và delegates Agent/document services (`app.py`); model/tool/path secrets ở backend.
 
-**Q3. Vì sao React không gọi Ollama/Gemini trực tiếp?**
-A. Backend phải giữ key, prompt, allowlist, filesystem restrictions và consistent behavior. Frontend chỉ gọi `/chat` hoặc document endpoints.
+A. React giữ temporary UI state và gọi HTTP. FastAPI validates schemas, maps controlled errors và delegates Agent/document services; model keys, prompt, tools và filesystem đều ở backend.
 
-**Q4. Khi nào request đi `/chat`, khi nào đi `/documents/{id}/ask`?**
-A. `App.jsx:145-170`: active document ready thì `askDocument`; nếu không thì `sendChatMessage`.
+**Q3. Vì sao frontend không gọi Ollama/Gemini trực tiếp?**
 
-**Q5. Local và cloud inference khác gì trong project?**
-A. Ollama/all-minilm/Qwen chạy local, riêng tư/không phí API nhưng giới hạn máy/model 4B. Gemini gọi cloud, cần key/network, có thể khác chất lượng/latency/cost. Only RAG generation switchable.
+A. Backend phải giữ key, grounded prompt, allowlist, path restrictions và consistent behavior. Frontend chỉ gọi `/chat` hoặc document endpoints.
+
+**Q4. Khi nào request đi `/chat`, khi nào đi `/documents/ask`?**
+
+A. `App.jsx:224-250`: có `documentsAtSendTime.length` thì gửi ID array qua `askDocuments`; empty array thì `sendChatMessage` tới `/chat`.
+
+**Q5. Local và cloud inference khác gì?**
+
+A. all-minilm/Qwen chạy local qua Ollama; Gemini chạy cloud, cần key/network và có latency/cost khác. Chỉ RAG generation được switch.
 
 **Q6. Đổi Qwen sang Gemini có rebuild Chroma không?**
-A. Không. `generate_answer` switch xảy ra sau retrieval; embedding vẫn all-minilm. Đổi embedding model thì phải re-embed/re-index.
 
-**Q7. Current Gemini model có đúng kiến trúc đích không?**
-A. Có. `config.py:25` mặc định là `gemini-3.5-flash`, và README dùng cùng model ID; Gemini vẫn chỉ là optional RAG generator, không điều khiển Agent.
+A. Không. Switch ở `generator.py:58-70`, sau retrieval/prompt. Đổi embedding model mới cần rebuild.
 
-**Q8. Knowledge Base nằm đâu?**
-A. Static source ở `knowledge/*.txt`, indexed vào `storage/chroma/static_knowledge`; upload có original/metadata/Chroma riêng dưới `uploads/<document_id>/`.
+**Q7. Gemini model hiện tại là gì?**
 
-**Q9. Upload có phải RAG hay training ngay không?**
-A. Upload chỉ validate/store/extract. Sau `/index` mới chunk/embed/store; không bước nào update Qwen/Gemini weights.
+A. `config.py:25` mặc định chính xác `gemini-3.5-flash`; inference dùng `generator.py:45-54`.
 
-**Q10. PDF được đọc như thế nào, scanned PDF thì sao?**
-A. `PdfReader` và `page.extract_text()` (`extractor.py:42-53`). Không text thì controlled error nói cần OCR; OCR không được implement.
+**Q8. Có hai loại Knowledge Base nào?**
 
-**Q11. Chunk boundary tính ra sao?**
-A. Size 180, overlap 30, step 150. Ranges đầu `[0,180)`, tiếp `[150,330)`; cuối dùng `min`.
+A. Static sample `knowledge/*.txt` dùng regression/Agent `search_knowledge`; teacher uploads nằm dưới `uploads/<id>` và được chọn bằng `activeDocuments`. Hai nguồn không tự trộn.
 
-**Q12. Tại sao cần overlap?**
-A. Giữ câu/ý gần boundary xuất hiện ở hai chunk, giảm mất context; đổi lại tăng số vector và duplicate text.
+**Q9. Upload có phải RAG hoặc training ngay không?**
 
-**Q13. Một chunk giữ metadata nào?**
-A. ID, source, index, text, `start_word`, `end_word`; upload thêm `document_id`. Chroma stores text + metadata + explicit vector.
+A. Không. Upload chỉ validate/store/extract. `/index` mới chunk/embed/store; không có update model weights.
 
-**Q14. all-minilm làm gì?**
-A. `ollama.embed` biến chunk hoặc question thành vector semantic 384 chiều quan sát trong index; không viết answer.
+**Q10. TXT, MD, PDF và DOCX được đọc thế nào?**
 
-**Q15. Vì sao document và query phải cùng embedding model?**
-A. Similarity chỉ có nghĩa trong cùng vector space/dimension. Loader validates metadata/model and `embed_query` checks dimension.
+A. TXT/MD dùng UTF-8 helper (`extractor.py:31-52`), MD chỉ là plain text; PDF dùng pypdf lines 55-66; DOCX dùng python-docx lines 69-83.
 
-**Q16. Vì sao L2 normalize?**
-A. Đưa norm mỗi vector về gần 1, làm cosine geometry rõ/ổn định; `_validate_embeddings` không cho vector chưa normalize vào DB.
+**Q11. Scanned PDF thì sao?**
 
-**Q17. Chroma thay NumPy search ở đâu?**
-A. `collection.query` ở `vector_store.py:171`; application gửi explicit query vector. NumPy chỉ còn conversion/normalization/inspection.
+A. Không có OCR. Nếu pypdf không lấy được text, controlled error tại `extractor.py:62-65` nói PDF có thể scan và cần OCR.
+
+**Q12. Chunk boundary tính ra sao?**
+
+A. Size 180, overlap 30, step 150. Full ranges đầu là `[0,180)`, `[150,330)`; tail dùng `min`.
+
+**Q13. Vì sao overlap?**
+
+A. Giữ ý gần boundary ở hai chunk; trade-off là thêm duplicate text/vectors.
+
+**Q14. Chunk giữ metadata nào?**
+
+A. `chunk_id`, source filename, index, text, start/end word; uploaded chunks thêm `document_id` (`chunker.py:24-34`).
+
+**Q15. all-minilm làm gì?**
+
+A. `ollama.embed` biến text thành semantic vectors; observed dimension là 384. Nó không viết answer.
+
+**Q16. Vì sao query và document dùng cùng embedding model?**
+
+A. Chỉ vectors trong cùng space/dimension mới so cosine có nghĩa; metadata/dimension checks enforce điều đó.
+
+**Q17. Vì sao L2 normalize?**
+
+A. Mỗi vector norm≈1, làm cosine geometry ổn định và được `_validate_embeddings` kiểm tra trước Chroma.
 
 **Q18. Chroma lưu gì?**
-A. ID, chunk document text, metadata, normalized embedding; collection metadata còn model/dimension/cosine/index kind/document ID.
+
+A. Chunk ID, text, metadata source/index/ranges/document ID và explicit normalized embedding; collection metadata giữ model/dimension/cosine.
 
 **Q19. `embedding_function=None` để làm gì?**
-A. Không cho Chroma tự chọn/ẩn embedder; project dùng all-minilm qua Ollama và supply vector explicit.
 
-**Q20. Top-K là gì?**
-A. K records gần query nhất trong collection; default K=3. Nó luôn trả cái “gần nhất” chứ không đảm bảo relevant.
+A. Không cho Chroma tự chọn hidden embedder; project tự cung cấp all-minilm vectors.
 
-**Q21. Distance và similarity liên hệ thế nào?**
-A. Chroma cosine returns distance; code line 188 dùng `similarity = 1 - distance`. Cao hơn được xem là semantic closer.
+**Q20. Distance và similarity liên hệ thế nào?**
 
-**Q22. Làm sao verify retrieval?**
-A. `inspect_retrieval.py` in query vector/all scores/Top-K; `evaluate_rag.py` kiểm tra expected source trong Top-3 và score ranges.
+A. Trong cosine space, code dùng `similarity = 1 - distance` tại `vector_store.py:215-222`; similarity cao hơn được rank trước.
 
-**Q23. Threshold 0.30 có phải confidence probability không?**
-A. Không. Nó là heuristic calibrated trên 7 câu static; upload note cảnh báo có thể cần recalibrate.
+**Q21. Top-K có đảm bảo relevant không?**
 
-**Q24. Tại sao unanswerable vẫn có Top-3?**
-A. Nearest-neighbor ranking luôn chọn records gần nhất dù đều irrelevant. Gate cố giảm việc gửi evidence yếu cho LLM.
+A. Không. Nó luôn lấy K nearest available records; threshold và grounded refusal xử lý answerability riêng.
 
-**Q25. Retrieval failure và generation failure khác gì?**
-A. Retrieval failure: relevant chunk không được lấy/gate fail. Generation failure: evidence đúng đã vào prompt nhưng model trả sai, thiếu citation hoặc refuse sai.
+**Q22. Threshold 0.30 có phải probability không?**
 
-**Q26. Grounding thực hiện thế nào?**
-A. System prompt says context-only/no outside facts, retrieved text is data not instructions, exact citation/refusal; context contains labels.
+A. Không. Nó là heuristic calibrated trên bảy static tests; uploaded note nói rõ có thể cần recalibration.
 
-**Q27. Citation có được guarantee ở production không?**
-A. Prompt yêu cầu; static evaluation regex-checks. API path không có deterministic validator sau generation, nên không guarantee tuyệt đối.
+**Q23. False positive và false negative là gì?**
 
-**Q28. Agent khác fixed RAG thế nào?**
-A. RAG luôn retrieve trước generation. Agent để Qwen quyết định direct answer/tool(s), có loop nhiều bước và có thể gọi RAG retrieval như tool.
+A. False positive: weak evidence vẫn qua gate. False negative: valid evidence score thấp nên bị từ chối.
 
-**Q29. Tool schema là gì?**
-A. JSON-compatible name/description/parameters cho model biết cách đề xuất call; Python registry vẫn validate, schema không tự execute.
+**Q24. Retrieval failure khác generation failure thế nào?**
 
-**Q30. Ai thực sự chạy tool?**
-A. `execute_tool` lookup allowlist và gọi Python function. Qwen chỉ trả structured name/arguments.
+A. Retrieval failure mất relevant chunk/gate; generation failure xảy ra sau khi evidence đúng đã vào prompt nhưng output vẫn sai/thiếu citation.
 
-**Q31. Observation là gì?**
-A. JSON chứa validation/success/result/error, appended as `role: tool`; vòng sau Qwen đọc để quyết định tiếp/final.
+**Q25. Grounding được làm thế nào?**
 
-**Q32. Calculator an toàn hơn `eval` thế nào?**
-A. AST walker chỉ nhận numeric constants và allowlisted operators; names, calls, attributes, power/import đều bị reject; còn giới hạn length/node count.
+A. Context-only system instruction, retrieved text treated as data, exact valid labels, refusal rule và low-temperature generator.
 
-**Q33. File tool chống traversal thế nào?**
-A. Reject absolute/drive/`..`, resolve path và require it remains relative to resolved project root; read còn kiểm tra extension/size/UTF-8.
+**Q26. Citation có guaranteed ở production không?**
 
-**Q34. `MAX_STEPS` bảo vệ gì?**
-A. `range(1,6)` chặn loop vô hạn. Hết 5 model turns trả deterministic stop message.
+A. Prompt bắt buộc nhưng model probabilistic; static evaluation validates deterministically, production API chưa có post-generation citation validator.
 
-**Q35. `search_knowledge` có gọi Qwen không?**
-A. Không. Nó chỉ calls static `search`, returns chunks/scores/gate. Agent Qwen dùng observation để answer.
+**Q27. Agent khác fixed RAG thế nào?**
 
-**Q36. Uploaded-document isolation ở đâu?**
-A. Mỗi ID có physical Chroma directory; loader checks collection metadata; query thêm `where document_id`; results rechecked.
+A. RAG luôn retrieve/gate/prompt/generate. Agent để Qwen quyết định direct answer hay tool(s), có observation loop và MAX_STEPS.
 
-**Q37. Tại sao re-index không duplicate chunks?**
-A. Rebuild deletes same collection before recreate/upsert (`vector_store.py:60-61`).
+**Q28. Tool schema là gì?**
 
-**Q38. `retrieval_gate_passed`, `generation_called`, `answerable` khác nhau?**
+A. JSON-compatible name/description/parameters để model đề xuất call. Python registry vẫn validate; schema không tự chạy code.
+
+**Q29. Ai thực sự chạy tool?**
+
+A. `execute_tool` tại `tool_registry.py:65-108`; Qwen chỉ đề xuất structured name/arguments.
+
+**Q30. Observation là gì?**
+
+A. JSON validation/success/result/error được append với role `tool` tại `agent_loop.py:119-134` cho lượt model tiếp theo.
+
+**Q31. Calculator an toàn hơn `eval` thế nào?**
+
+A. Restricted AST chỉ cho numeric constants và allowlisted operators; names, calls, attributes, power/import bị reject.
+
+**Q32. File tool chống traversal thế nào?**
+
+A. `file_tools.py:54-70` rejects absolute/drive/`..`, resolves path và requires nó vẫn nằm dưới project root.
+
+**Q33. `MAX_STEPS` bảo vệ gì?**
+
+A. `agent_loop.py:81` giới hạn năm model turns; exhaustion trả deterministic message lines 136-142.
+
+**Q34. `search_knowledge` có gọi RAG generator không?**
+
+A. Không. `knowledge_tool.py:28-47` chỉ returns static chunks/scores/gate; Agent Qwen dùng observation để viết final answer.
+
+**Q35. Uploaded-document isolation ở đâu?**
+
+A. Mỗi ID có Chroma directory riêng (`indexer.py:26-27`), collection identity checks, metadata filter và post-query ID checks.
+
+**Q36. Vì sao re-index không duplicate?**
+
+A. `vector_store.py:60-61` deletes same named collection before create/upsert.
+
+**Q37. Ba flag gate/generation/answerable khác nhau?**
+
 A. Lần lượt: score đạt threshold; provider thật sự chạy; output cuối không phải exact refusal.
 
-**Q39. Model đổi ở đâu?**
-A. RAG provider/model env ở `config.py:20-26`, branch `generator.py:63-66`; Agent model cố định ở `config.py:29` và used `agent_loop.py:84`.
+**Q38. Model switch nằm đâu?**
 
-**Q40. Điểm hạn chế production chính?**
-A. Corpus nhỏ, word chunking, raw cosine+heuristic, no reranker/hybrid/verification/auth/persistent chat, local 4B probabilistic, per-document single index, Gemini cloud dependency.
+A. RAG settings `config.py:20-26`, branch `generator.py:58-70`; Agent fixed Qwen ở `config.py:28-29` và `agent_loop.py:84`.
+
+**Q39. Vì sao support nhiều documents?**
+
+A. Teacher có thể chia knowledge thành policy, handbook, FAQ. `activeDocuments` cho phép một câu hỏi tìm evidence trên toàn bộ set mà vẫn giữ citation/source identity.
+
+**Q40. Vì sao mỗi uploaded document có Chroma index riêng?**
+
+A. Isolation, idempotent rebuild và detach-by-ID dễ giải thích. Multi retrieval merge ở request time, không cần database/collection kết hợp mới.
+
+**Q41. Query nhiều documents như thế nào?**
+
+A. `retriever.py:82-124` load mỗi selected collection, embed question once, rồi query từng collection bằng cùng normalized vector.
+
+**Q42. Vì sao lấy candidates per document trước global ranking?**
+
+A. Collections tách vật lý nên phải lấy nearest candidates từng nơi, sau đó mới có một pool để so score và chọn evidence tốt nhất toàn set.
+
+**Q43. GLOBAL Top-K nghĩa là gì?**
+
+A. Sau merge, sort toàn bộ candidates và slice một lần tại `retriever.py:137-140`. Đó là final prompt evidence across all active files.
+
+**Q44. Top-K=3 có nghĩa ba chunks mỗi file không?**
+
+A. Không. Có thể lấy tối đa ba candidate mỗi collection nội bộ, nhưng final context chỉ tối đa ba chunks tổng cộng.
+
+**Q45. Source filename/citation sống qua merge thế nào?**
+
+A. Filename becomes `source` ở `indexer.py:39`, được Chroma lưu/restore, dict merge không bỏ field, prompt dùng `[SOURCE filename | full-chunk-id]`.
+
+**Q46. Detach một document thì sao?**
+
+A. `App.jsx:340-346` removes ID khỏi `activeDocuments`; future ID arrays không chứa nó nên backend không query collection đó. Server index vẫn còn.
+
+**Q47. Static `knowledge/*.txt` có thuộc teacher-uploaded KB không?**
+
+A. Không. Nó là sample/regression corpus và nguồn cho Agent `search_knowledge`; `/documents/ask` chỉ nhận/query uploaded IDs.
+
+**Q48. Vì sao vẫn giữ static sample knowledge?**
+
+A. Để giảng dạy/reproduce Phase 1 pipeline, regression evaluation và chứng minh RAG-as-Agent-tool mà không phụ thuộc teacher uploads.
+
+**Q49. Exam dùng một file và năm file khác nhau thế nào?**
+
+A. Frontend/API body vẫn cùng shape ID array. Một ID query một collection; năm IDs loop năm collections; cả hai vẫn output một global Top-K tối đa ba chunks.
+
+**Q50. Single-document compatibility còn không?**
+
+A. Có: `askDocument` (`documentApi.js:53-69`), API `/documents/{id}/ask` (`app.py:218-259`), single retriever (`retriever.py:17-62`) và CLI `ask_document.py` vẫn hoạt động.
+
+**Q51. Production limitations chính?**
+
+A. Small corpus/local 4B, word chunking, raw cosine + heuristic threshold, no reranker/hybrid/OCR/auth/persistent chat/post-generation citation verification; Gemini requires cloud network/key; Agent output remains probabilistic.
+
+**Q52. Chroma thay manual NumPy search ở đâu?**
+
+A. Runtime retrieval gọi `collection.query` tại `vector_store.py:192-199`. NumPy vẫn cần cho float32 conversion, L2 normalization và vector validation, nhưng không còn `embeddings @ query_vector` làm production search.
+
+**Q53. Làm sao nhìn thấy và verify retrieval?**
+
+A. `inspect_retrieval.py:14-74` in query vector, mọi score và Top-K; `evaluate_rag.py:32-56` kiểm tra expected source trong Top-3 và lines 86-154 audit score ranges/threshold.
+
+**Q54. Vì sao câu unanswerable vẫn nhận được Top-K?**
+
+A. Nearest-neighbor query luôn trả records gần nhất nếu collection có dữ liệu, dù score thấp và facts không tồn tại. Vì vậy QA gate ở `question_answering.py:44-60` mới quyết định có gọi generator hay trả exact refusal.
 
 ---
 
-**Audit completion:** tài liệu này phản ánh repository sau final consistency cleanup. Chỉ default Gemini model và documentation wording được đồng bộ; không có thay đổi kiến trúc hoặc logic Agent/RAG/tool.
+**Audit completion:** Bản refresh này phản ánh current multi-file Knowledge Base, GLOBAL Top-K, TXT/MD/PDF/DOCX support và Gemini default `gemini-3.5-flash`. Không phát hiện runtime/config architecture mismatch thực tế; các limitation ở Q51 là deliberate scope, không phải documentation inconsistency.
