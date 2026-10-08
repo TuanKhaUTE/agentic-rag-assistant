@@ -460,56 +460,6 @@ h1 {
   line-height: 1.65;
 }
 
-.example-grid {
-  display: grid;
-  width: 100%;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  text-align: left;
-}
-
-.example-button {
-  position: relative;
-  display: grid;
-  min-height: 92px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-content: center;
-  gap: 5px 14px;
-  padding: 16px 16px 16px 18px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  color: var(--ink);
-  background: var(--surface-soft);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
-}
-
-.example-button:hover:not(:disabled) {
-  border-color: #a9bbb3;
-  background: var(--forest-50);
-  box-shadow: 0 6px 16px rgb(15 47 43 / 6%);
-}
-
-.example-button span {
-  font-size: 0.82rem;
-  font-weight: 800;
-}
-
-.example-button small {
-  grid-column: 1;
-  color: var(--ink-muted);
-  font-size: 0.72rem;
-  line-height: 1.45;
-}
-
-.example-button .icon {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  align-self: center;
-  color: var(--forest-600);
-}
-
 .message-row {
   display: flex;
   width: min(100%, 880px);
@@ -624,29 +574,6 @@ h1 {
 .message-row.user .citation {
   color: inherit;
   background: rgb(255 255 255 / 12%);
-}
-
-.message-metadata {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 13px;
-  padding-top: 11px;
-  border-top: 1px solid #e5e9e5;
-  color: var(--ink-muted);
-  font-size: 0.7rem;
-}
-
-.message-metadata span {
-  padding: 5px 8px;
-  border: 1px solid #e0e5e0;
-  border-radius: 999px;
-  background: var(--surface-soft);
-}
-
-.message-metadata strong {
-  color: var(--ink-soft);
-  font-weight: 800;
 }
 
 .rag-details {
@@ -1264,14 +1191,6 @@ h1 {
   .welcome-state > p:not(.eyebrow) {
     margin: 12px auto 20px;
     font-size: 0.88rem;
-  }
-
-  .example-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .example-button {
-    min-height: 76px;
   }
 
   .message-row {

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "A",
+    "type": "answerable",
+    "question": "When is the annual progress review held and who leads it?",
+    "expected_sources": ["policy.txt"]
+  },
+  {
+    "id": "B",
+    "type": "answerable",
+    "question": "What should someone do first when something dangerous happens in the lab?",
+    "expected_sources": ["incident.md"]
+  },
+  {
+    "id": "C",
+    "type": "answerable",
+    "question": "How can a student reach the development server from outside campus?",
+    "expected_sources": ["remote_access.txt"]
+  },
+  {
+    "id": "D",
+    "type": "answerable",
+    "question": "Who records academic follow-up actions, and who reviews a laboratory incident report?",
+    "expected_sources": ["policy.txt", "incident.md"]
+  },
+  {
+    "id": "E",
+    "type": "unanswerable",
+    "question": "What is the university president's private phone number?",
+    "expected_sources": []
+  }
+]

@@ -50,27 +50,8 @@ export async function indexDocument(documentId) {
 }
 
 
-export async function askDocument(documentId, question) {
-  const response = await fetch(
-    `${API_BASE_URL}/documents/${encodeURIComponent(documentId)}/ask`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
-    },
-  );
-  if (!response.ok) {
-    throw await controlledError(
-      response,
-      "The document question could not be completed.",
-    );
-  }
-  return response.json();
-}
-
-
-export async function askDocuments(documentIds, question) {
-  const response = await fetch(`${API_BASE_URL}/documents/ask`, {
+export async function askKnowledgeBase(documentIds, question) {
+  const response = await fetch(`${API_BASE_URL}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ document_ids: documentIds, question }),

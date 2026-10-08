@@ -1,0 +1,5 @@
+Remote Access Guidance
+
+Students may connect to the university development server from off campus by using the approved virtual private network, or VPN. The VPN requires the student's university account and multi-factor authentication. After the VPN connection is established, the student may open the development service using its internal address. Direct public access to the development server is not allowed.
+
+Students must not share credentials, approve an unexpected authentication prompt, or store passwords in project source files. If access fails after two attempts, the student should stop retrying and contact the teaching support desk. Planned maintenance is normally announced in the course portal. Remote access is provided for coursework and must follow the university acceptable-use policy.

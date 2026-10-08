@@ -1,32 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
-import { sendChatMessage } from "./services/chatApi.js";
 import {
-  askDocuments,
+  askKnowledgeBase,
   DocumentApiError,
   indexDocument,
   uploadDocument,
 } from "./services/documentApi.js";
 
 
-const EXAMPLE_PROMPTS = [
-  {
-    label: "Study the knowledge base",
-    text: "What is RAG? Use the study knowledge base.",
-  },
-  {
-    label: "Run a calculation",
-    text: "Calculate 10 * 25.",
-  },
-  {
-    label: "Inspect project files",
-    text: "List the files in the knowledge folder.",
-  },
-  {
-    label: "Combine two tools",
-    text: "Use the study knowledge base to explain AI agents, then calculate 3 * 2.",
-  },
-];
 const SUPPORTED_EXTENSIONS = ["txt", "md", "pdf", "docx"];
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
@@ -34,7 +15,6 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 function AppIcon({ name, size = 20 }) {
   const paths = {
     attach: <path d="M12 17.5 18.5 11a4.24 4.24 0 0 0-6-6L5 12.5a5.66 5.66 0 0 0 8 8l7-7a3.54 3.54 0 0 0-5-5L8.5 15a1.41 1.41 0 0 0 2 2l6-6" />,
-    chat: <path d="M20 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h9a4 4 0 0 1 4 4Z" />,
     chevron: <path d="m9 18 6-6-6-6" />,
     document: <><path d="M6 3h8l4 4v14H6Z" /><path d="M14 3v5h4M9 13h6M9 17h6" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
@@ -75,16 +55,6 @@ function AnswerText({ text }) {
 }
 
 
-function GeneralMetadata({ steps, toolsUsed }) {
-  return (
-    <div className="message-metadata" aria-label="Agent execution details">
-      <span>Steps <strong>{steps}</strong></span>
-      <span>Tools <strong>{toolsUsed.length ? toolsUsed.join(", ") : "None"}</strong></span>
-    </div>
-  );
-}
-
-
 function DocumentMetadata({ result }) {
   const chunkCount = result.retrieved_chunks.length;
   const documentLabel = result.document_count > 1
@@ -108,6 +78,8 @@ function DocumentMetadata({ result }) {
           <div><dt>Knowledge base</dt><dd>{documentLabel}</dd></div>
           <div><dt>Highest similarity</dt><dd>{result.highest_similarity.toFixed(3)}</dd></div>
           <div><dt>Top-K</dt><dd>{result.top_k}</dd></div>
+          <div><dt>Candidate pool</dt><dd>{result.candidate_count}</dd></div>
+          <div><dt>Query vector</dt><dd>{result.query_embedding_dimension} dimensions</dd></div>
           <div><dt>Heuristic threshold</dt><dd>{result.similarity_threshold.toFixed(2)}</dd></div>
           <div><dt>Retrieval gate</dt><dd>{result.retrieval_gate_passed ? "Passed" : "Failed"}</dd></div>
           <div><dt>Generation called</dt><dd>{result.generation_called ? "Yes" : "No"}</dd></div>
@@ -171,10 +143,10 @@ function App() {
   );
   const activeModeLabel = hasActiveDocuments
     ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}`
-    : "General Assistant";
+    : "No Knowledge Base";
   const modeDescription = hasActiveDocuments
     ? "Answers are grounded in the active uploaded documents."
-    : "Ask directly or let the Agent use approved tools.";
+    : "Upload at least one document before asking a question.";
 
   useEffect(() => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -183,12 +155,6 @@ function App() {
       block: "nearest",
     });
   }, [messages, isLoading]);
-
-  function chooseExample(prompt) {
-    setInput(prompt);
-    setError("");
-    inputRef.current?.focus();
-  }
 
   function startNewConversation() {
     if (isLoading || isPreparingDocument) {
@@ -208,10 +174,14 @@ function App() {
       return;
     }
 
+    if (!hasActiveDocuments) {
+      setError("Please upload at least one document to create the Knowledge Base.");
+      inputRef.current?.focus();
+      return;
+    }
+
     const documentsAtSendTime = [...activeDocuments];
-    const modeLabel = documentsAtSendTime.length
-      ? `Knowledge Base · ${documentsAtSendTime.length} ${documentsAtSendTime.length === 1 ? "document" : "documents"}`
-      : "General Assistant";
+    const modeLabel = `Knowledge Base · ${documentsAtSendTime.length} ${documentsAtSendTime.length === 1 ? "document" : "documents"}`;
     setMessages((current) => [
       ...current,
       { role: "user", text: message, modeLabel },
@@ -221,43 +191,25 @@ function App() {
     setIsLoading(true);
 
     try {
-      if (documentsAtSendTime.length) {
-        const result = await askDocuments(
-          documentsAtSendTime.map((document) => document.document_id),
-          message,
-        );
-        setMessages((current) => [
-          ...current,
-          {
-            role: "assistant",
-            text: result.answer,
-            mode: "document",
-            modeLabel,
-            documentResult: result,
-          },
-        ]);
-      } else {
-        const result = await sendChatMessage(message);
-        setMessages((current) => [
-          ...current,
-          {
-            role: "assistant",
-            text: result.answer,
-            mode: "general",
-            modeLabel,
-            steps: result.steps,
-            toolsUsed: result.tools_used,
-          },
-        ]);
-      }
+      const result = await askKnowledgeBase(
+        documentsAtSendTime.map((document) => document.document_id),
+        message,
+      );
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: result.answer,
+          modeLabel,
+          documentResult: result,
+        },
+      ]);
     } catch (caughtError) {
       setError(
-        documentsAtSendTime.length
-          ? friendlyDocumentError(
-              caughtError,
-              "The knowledge-base question failed. Check that the backend is running.",
-            )
-          : "The assistant could not be reached. Check that the backend is running.",
+        friendlyDocumentError(
+          caughtError,
+          "The knowledge-base question failed. Check that the backend is running.",
+        ),
       );
     } finally {
       setIsLoading(false);
@@ -364,7 +316,7 @@ function App() {
           <span className="brand-mark"><AppIcon name="spark" size={22} /></span>
           <span>
             <strong>Knowledge Lab</strong>
-            <small>AI study workspace</small>
+            <small>Document RAG workspace</small>
           </span>
         </div>
 
@@ -380,13 +332,13 @@ function App() {
 
         <section className="sidebar-section" aria-labelledby="mode-heading">
           <p className="sidebar-heading" id="mode-heading">Current mode</p>
-          <div className={`mode-card ${hasActiveDocuments ? "document" : "general"}`}>
+          <div className="mode-card document">
             <span className="mode-icon">
-              <AppIcon name={hasActiveDocuments ? "document" : "chat"} size={20} />
+              <AppIcon name="document" size={20} />
             </span>
             <span>
-              <strong>{hasActiveDocuments ? "Knowledge Base" : "General Assistant"}</strong>
-              <small>{hasActiveDocuments ? `${activeDocuments.length} active · ${totalChunks} chunks` : "Agent with approved tools"}</small>
+              <strong>{hasActiveDocuments ? "Knowledge Base" : "No Knowledge Base"}</strong>
+              <small>{hasActiveDocuments ? `${activeDocuments.length} active · ${totalChunks} chunks` : "Upload documents to begin"}</small>
             </span>
           </div>
         </section>
@@ -416,7 +368,7 @@ function App() {
             </p>
           )}
           {!hasActiveDocuments && !isPreparingDocument && (
-            <p className="no-document">No uploaded knowledge attached. General requests use the Agent.</p>
+            <p className="no-document">No knowledge attached. Upload one or more documents to begin.</p>
           )}
         </section>
 
@@ -430,43 +382,26 @@ function App() {
         <header className="workspace-header">
           <div>
             <p className="eyebrow">University AI systems lab</p>
-            <h1>AI Knowledge Assistant</h1>
+            <h1>Document RAG Assistant</h1>
           </div>
           <div className="mode-badge">
             <span className="status-dot" aria-hidden="true" />
-            {hasActiveDocuments ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}` : "General Assistant"}
+            {hasActiveDocuments ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}` : "No Knowledge Base"}
           </div>
         </header>
 
-        <section className="conversation-card" aria-label="Chat with the AI Knowledge Assistant">
+        <section className="conversation-card" aria-label="Chat with the document-grounded RAG assistant">
           <div className="message-history" aria-live="polite" aria-busy={isLoading}>
             {messages.length === 0 && (
               <section className="welcome-state">
                 <div className="welcome-icon"><AppIcon name="spark" size={28} /></div>
                 <p className="eyebrow">{hasActiveDocuments ? "Uploaded knowledge workspace" : "Knowledge workspace"}</p>
-                <h2>{hasActiveDocuments ? "Ask across your active documents" : "What would you like to understand?"}</h2>
+                <h2>{hasActiveDocuments ? "Ask across your active documents" : "Upload documents to begin"}</h2>
                 <p>
                   {hasActiveDocuments
                     ? `Answers will use only the ${activeDocuments.length} active uploaded ${activeDocuments.length === 1 ? "document" : "documents"}.`
-                    : "Explore the static study knowledge base, use approved tools, or attach documents for isolated RAG."}
+                    : "Attach TXT, Markdown, PDF, or DOCX files to create a document-grounded Knowledge Base."}
                 </p>
-                {!hasActiveDocuments && !isPreparingDocument && (
-                  <div className="example-grid" aria-label="Example prompts">
-                    {EXAMPLE_PROMPTS.map((prompt) => (
-                      <button
-                        className="example-button"
-                        key={prompt.text}
-                        type="button"
-                        onClick={() => chooseExample(prompt.text)}
-                        disabled={isLoading}
-                      >
-                        <span>{prompt.label}</span>
-                        <small>{prompt.text}</small>
-                        <AppIcon name="chevron" size={16} />
-                      </button>
-                    ))}
-                  </div>
-                )}
               </section>
             )}
 
@@ -485,10 +420,7 @@ function App() {
                   </div>
                   <div className="message-bubble">
                     <AnswerText text={message.text} />
-                    {message.role === "assistant" && message.mode === "general" && (
-                      <GeneralMetadata steps={message.steps} toolsUsed={message.toolsUsed} />
-                    )}
-                    {message.role === "assistant" && message.mode === "document" && (
+                    {message.role === "assistant" && (
                       <DocumentMetadata result={message.documentResult} />
                     )}
                   </div>
@@ -580,7 +512,7 @@ function App() {
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={hasActiveDocuments ? "Ask across the active knowledge base..." : "Ask a question or request a tool..."}
+                placeholder={hasActiveDocuments ? "Ask across the active knowledge base..." : "Upload documents before asking a question..."}
                 rows="2"
                 disabled={isLoading || isPreparingDocument}
                 aria-describedby="composer-context"
@@ -595,7 +527,7 @@ function App() {
               </button>
             </form>
             <div className="composer-footer" id="composer-context">
-              <span><strong>{hasActiveDocuments ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}` : "General Assistant"}</strong> · {modeDescription}</span>
+              <span><strong>{hasActiveDocuments ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}` : "No Knowledge Base"}</strong> · {modeDescription}</span>
               <span>Enter to send · Shift+Enter for a new line</span>
             </div>
           </div>
