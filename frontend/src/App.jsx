@@ -3,13 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   askKnowledgeBase,
   DocumentApiError,
-  indexDocument,
-  uploadDocument,
+  getAssignedKnowledgeBase,
 } from "./services/documentApi.js";
-
-
-const SUPPORTED_EXTENSIONS = ["txt", "md", "pdf", "docx"];
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 
 function AppIcon({ name, size = 20 }) {
@@ -100,24 +95,6 @@ function DocumentMetadata({ result }) {
 }
 
 
-function validateSelectedFile(file) {
-  if (!file) {
-    return "Select a TXT, Markdown, PDF, or DOCX file first.";
-  }
-  const extension = file.name.toLowerCase().split(".").pop();
-  if (!SUPPORTED_EXTENSIONS.includes(extension)) {
-    return "Unsupported file type. Select a TXT, Markdown, PDF, or DOCX file.";
-  }
-  if (file.size === 0) {
-    return "The selected file is empty.";
-  }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return "The selected file is larger than the 10 MB upload limit.";
-  }
-  return "";
-}
-
-
 function friendlyDocumentError(error, fallbackMessage) {
   return error instanceof DocumentApiError ? error.message : fallbackMessage;
 }
@@ -129,24 +106,55 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeDocuments, setActiveDocuments] = useState([]);
-  const [pendingDocuments, setPendingDocuments] = useState([]);
+  const [isKnowledgeLoading, setIsKnowledgeLoading] = useState(true);
   const [documentError, setDocumentError] = useState("");
   const inputRef = useRef(null);
-  const fileInputRef = useRef(null);
   const historyEndRef = useRef(null);
 
-  const isPreparingDocument = pendingDocuments.length > 0;
+  const isPreparingDocument = isKnowledgeLoading;
   const hasActiveDocuments = activeDocuments.length > 0;
   const totalChunks = activeDocuments.reduce(
     (total, document) => total + document.chunk_count,
     0,
   );
   const activeModeLabel = hasActiveDocuments
-    ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}`
-    : "No Knowledge Base";
+    ? "Lumen Institute — Student Handbook"
+    : "Knowledge Base unavailable";
   const modeDescription = hasActiveDocuments
-    ? "Answers are grounded in the active uploaded documents."
-    : "Upload at least one document before asking a question.";
+    ? "Answers use only the assigned handbook."
+    : "Run the assigned knowledge-base initializer before asking questions.";
+
+  useEffect(() => {
+    let current = true;
+
+    async function loadKnowledgeBase() {
+      try {
+        const knowledgeBase = await getAssignedKnowledgeBase();
+        if (current) {
+          setActiveDocuments([knowledgeBase]);
+          setDocumentError("");
+        }
+      } catch (caughtError) {
+        if (current) {
+          setDocumentError(
+            friendlyDocumentError(
+              caughtError,
+              "The assigned knowledge base is unavailable. Run the initializer first.",
+            ),
+          );
+        }
+      } finally {
+        if (current) {
+          setIsKnowledgeLoading(false);
+        }
+      }
+    }
+
+    loadKnowledgeBase();
+    return () => {
+      current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -175,13 +183,13 @@ function App() {
     }
 
     if (!hasActiveDocuments) {
-      setError("Please upload at least one document to create the Knowledge Base.");
+      setError("The assigned Knowledge Base is not ready. Run scripts/initialize_kb.py.");
       inputRef.current?.focus();
       return;
     }
 
     const documentsAtSendTime = [...activeDocuments];
-    const modeLabel = `Knowledge Base · ${documentsAtSendTime.length} ${documentsAtSendTime.length === 1 ? "document" : "documents"}`;
+    const modeLabel = "Lumen Institute — Student Handbook";
     setMessages((current) => [
       ...current,
       { role: "user", text: message, modeLabel },
@@ -224,99 +232,14 @@ function App() {
     }
   }
 
-  function updatePendingDocument(key, updates) {
-    setPendingDocuments((current) => current.map((document) => (
-      document.key === key ? { ...document, ...updates } : document
-    )));
-  }
-
-  async function prepareDocuments(files) {
-    const queued = files.map((file, index) => ({
-      key: `${file.name}-${file.lastModified}-${index}`,
-      file,
-      filename: file.name,
-      status: "uploading",
-    }));
-    setPendingDocuments(queued);
-    setDocumentError("");
-    setError("");
-
-    const failures = [];
-    for (const pending of queued) {
-      try {
-        const uploaded = await uploadDocument(pending.file);
-        updatePendingDocument(pending.key, { status: "indexing" });
-        const indexed = await indexDocument(uploaded.document_id);
-        setActiveDocuments((current) => [
-          ...current,
-          { ...uploaded, ...indexed },
-        ]);
-      } catch (caughtError) {
-        failures.push(
-          `${pending.filename}: ${friendlyDocumentError(
-            caughtError,
-            "The document could not be prepared.",
-          )}`,
-        );
-      } finally {
-        setPendingDocuments((current) => (
-          current.filter((document) => document.key !== pending.key)
-        ));
-      }
-    }
-
-    if (failures.length) {
-      setDocumentError(failures.join(" "));
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  }
-
-  function selectDocuments(event) {
-    const files = Array.from(event.target.files ?? []);
-    if (!files.length) {
-      return;
-    }
-    const validationError = files
-      .map((file) => ({ file, error: validateSelectedFile(file) }))
-      .find((item) => item.error);
-    if (validationError) {
-      setDocumentError(`${validationError.file.name}: ${validationError.error}`);
-      event.target.value = "";
-      return;
-    }
-    prepareDocuments(files);
-  }
-
-  function detachDocument(documentId) {
-    if (isLoading || isPreparingDocument) {
-      return;
-    }
-    setActiveDocuments((current) => (
-      current.filter((document) => document.document_id !== documentId)
-    ));
-    setDocumentError("");
-    inputRef.current?.focus();
-  }
-
-  function detachAllDocuments() {
-    if (isLoading || isPreparingDocument) {
-      return;
-    }
-    setActiveDocuments([]);
-    setDocumentError("");
-    inputRef.current?.focus();
-  }
-
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Assistant workspace">
         <div className="brand">
           <span className="brand-mark"><AppIcon name="spark" size={22} /></span>
           <span>
-            <strong>Knowledge Lab</strong>
-            <small>Document RAG workspace</small>
+            <strong>Lumen Institute</strong>
+            <small>Student Handbook RAG</small>
           </span>
         </div>
 
@@ -337,26 +260,20 @@ function App() {
               <AppIcon name="document" size={20} />
             </span>
             <span>
-              <strong>{hasActiveDocuments ? "Knowledge Base" : "No Knowledge Base"}</strong>
-              <small>{hasActiveDocuments ? `${activeDocuments.length} active · ${totalChunks} chunks` : "Upload documents to begin"}</small>
+              <strong>{hasActiveDocuments ? "Assigned handbook" : "Knowledge Base unavailable"}</strong>
+              <small>{hasActiveDocuments ? `${totalChunks} chunks · Ready` : "Run the initializer"}</small>
             </span>
           </div>
         </section>
 
         <section className="sidebar-section document-section" aria-labelledby="document-heading">
-          <p className="sidebar-heading" id="document-heading">Knowledge Base</p>
+          <p className="sidebar-heading" id="document-heading">Assigned Knowledge Base</p>
           <div className="sidebar-document-list">
-            {pendingDocuments.map((document) => (
-              <div className="document-card preparing" role="status" key={document.key}>
-                <span className="file-tile"><AppIcon name="document" size={20} /></span>
-                <span><strong>{document.filename}</strong><small>{document.status === "uploading" ? "Uploading..." : "Extracting and indexing..."}</small></span>
-              </div>
-            ))}
             {activeDocuments.map((document) => (
               <div className="document-card ready" key={document.document_id}>
                 <span className="file-tile"><AppIcon name="document" size={20} /></span>
                 <span>
-                  <strong>{document.filename}</strong>
+                  <strong>{document.title ?? document.filename}</strong>
                   <small><span className="status-dot" aria-hidden="true" />{document.chunk_count} chunks · Ready</small>
                 </span>
               </div>
@@ -364,11 +281,11 @@ function App() {
           </div>
           {hasActiveDocuments && (
             <p className="knowledge-summary">
-              {activeDocuments.length} {activeDocuments.length === 1 ? "document" : "documents"} · {totalChunks} chunks · Ready
+              Assigned handbook · {totalChunks} chunks · Ready
             </p>
           )}
           {!hasActiveDocuments && !isPreparingDocument && (
-            <p className="no-document">No knowledge attached. Upload one or more documents to begin.</p>
+            <p className="no-document">Run scripts/initialize_kb.py, then refresh this page.</p>
           )}
         </section>
 
@@ -382,11 +299,11 @@ function App() {
         <header className="workspace-header">
           <div>
             <p className="eyebrow">University AI systems lab</p>
-            <h1>Document RAG Assistant</h1>
+            <h1>Lumen Institute — Student Handbook</h1>
           </div>
           <div className="mode-badge">
             <span className="status-dot" aria-hidden="true" />
-            {hasActiveDocuments ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}` : "No Knowledge Base"}
+            {hasActiveDocuments ? "Assigned Knowledge Base · Ready" : "Knowledge Base unavailable"}
           </div>
         </header>
 
@@ -395,12 +312,12 @@ function App() {
             {messages.length === 0 && (
               <section className="welcome-state">
                 <div className="welcome-icon"><AppIcon name="spark" size={28} /></div>
-                <p className="eyebrow">{hasActiveDocuments ? "Uploaded knowledge workspace" : "Knowledge workspace"}</p>
-                <h2>{hasActiveDocuments ? "Ask across your active documents" : "Upload documents to begin"}</h2>
+                <p className="eyebrow">Assigned midterm knowledge base</p>
+                <h2>{hasActiveDocuments ? "Ask the Lumen Student Handbook" : "Initialize the handbook to begin"}</h2>
                 <p>
                   {hasActiveDocuments
-                    ? `Answers will use only the ${activeDocuments.length} active uploaded ${activeDocuments.length === 1 ? "document" : "documents"}.`
-                    : "Attach TXT, Markdown, PDF, or DOCX files to create a document-grounded Knowledge Base."}
+                    ? "Answers use only the assigned handbook and include retrieved chunk citations."
+                    : "Run the initialization command in the README, then refresh this page."}
                 </p>
               </section>
             )}
@@ -451,26 +368,18 @@ function App() {
               <div className="active-knowledge-panel">
                 <div className="active-knowledge-heading">
                   <span>
-                    <strong>Knowledge Base</strong>
-                    <small>{activeDocuments.length} {activeDocuments.length === 1 ? "document" : "documents"} · {totalChunks} chunks · Ready</small>
+                    <strong>Assigned Knowledge Base</strong>
+                    <small>Lumen Institute — Student Handbook · {totalChunks} chunks · Ready</small>
                   </span>
-                  {activeDocuments.length > 1 && (
-                    <button type="button" onClick={detachAllDocuments} disabled={isLoading}>
-                      Detach all
-                    </button>
-                  )}
                 </div>
                 <div className="active-document-list">
                   {activeDocuments.map((document) => (
                     <div className="active-document-chip" key={document.document_id}>
                       <span className="file-tile"><AppIcon name="document" size={18} /></span>
                       <span className="chip-copy">
-                        <strong>{document.filename}</strong>
+                        <strong>{document.title ?? document.filename}</strong>
                         <small>{document.words} words · {document.chunk_count} chunks</small>
                       </span>
-                      <button type="button" onClick={() => detachDocument(document.document_id)} disabled={isLoading} aria-label={`Detach ${document.filename}`}>
-                        Detach
-                      </button>
                     </div>
                   ))}
                 </div>
@@ -481,38 +390,21 @@ function App() {
               <div className="preparation-banner" role="status">
                 <span className="progress-ring" aria-hidden="true" />
                 <span>
-                  <strong>Preparing uploaded knowledge</strong>
-                  <small>{pendingDocuments.map((document) => `${document.filename}: ${document.status}`).join(" · ")}</small>
+                  <strong>Loading assigned knowledge base</strong>
+                  <small>Lumen Institute — Student Handbook</small>
                 </span>
               </div>
             )}
 
             <form className="composer" onSubmit={sendMessage}>
               <label className="sr-only" htmlFor="message-input">Your message</label>
-              <label
-                className={`attach-button ${isLoading || isPreparingDocument ? "disabled" : ""}`}
-                htmlFor="document-file"
-                title="Attach TXT, Markdown, PDF, or DOCX documents"
-              >
-                <AppIcon name="attach" size={20} />
-                <span className="sr-only">Attach document</span>
-                <input
-                  id="document-file"
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".txt,.md,.pdf,.docx"
-                  multiple
-                  onChange={selectDocuments}
-                  disabled={isLoading || isPreparingDocument}
-                />
-              </label>
               <textarea
                 id="message-input"
                 ref={inputRef}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={hasActiveDocuments ? "Ask across the active knowledge base..." : "Upload documents before asking a question..."}
+                placeholder={hasActiveDocuments ? "Ask a question about the Lumen Student Handbook..." : "Initialize the assigned handbook before asking..."}
                 rows="2"
                 disabled={isLoading || isPreparingDocument}
                 aria-describedby="composer-context"
@@ -527,7 +419,7 @@ function App() {
               </button>
             </form>
             <div className="composer-footer" id="composer-context">
-              <span><strong>{hasActiveDocuments ? `Knowledge Base · ${activeDocuments.length} ${activeDocuments.length === 1 ? "document" : "documents"}` : "No Knowledge Base"}</strong> · {modeDescription}</span>
+              <span><strong>{hasActiveDocuments ? "Assigned Knowledge Base" : "Knowledge Base unavailable"}</strong> · {modeDescription}</span>
               <span>Enter to send · Shift+Enter for a new line</span>
             </div>
           </div>

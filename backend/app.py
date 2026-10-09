@@ -15,10 +15,15 @@ from backend.documents import (
     supported_extension,
 )
 from backend.documents.indexer import DocumentIndexError, index_uploaded_document
+from backend.knowledge_base import (
+    AssignedKnowledgeBaseError,
+    get_assigned_knowledge_base,
+)
 from backend.rag.generator import GenerationConfigurationError
 from backend.rag.retriever import DocumentNotIndexedError
 from backend.rag.service import answer_question
 from backend.schemas import (
+    AssignedKnowledgeBaseResponse,
     ChatRequest,
     ChatResponse,
     DocumentIndexResponse,
@@ -46,6 +51,19 @@ app.add_middleware(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get(
+    "/knowledge-base",
+    response_model=AssignedKnowledgeBaseResponse,
+)
+def assigned_knowledge_base() -> AssignedKnowledgeBaseResponse:
+    """Return safe metadata for the fixed handbook indexed for this midterm."""
+    try:
+        metadata = get_assigned_knowledge_base()
+    except AssignedKnowledgeBaseError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return AssignedKnowledgeBaseResponse(**metadata)
 
 
 @app.post(
@@ -139,9 +157,18 @@ def _retrieved_chunk_responses(result: dict[str, object]) -> list[dict[str, obje
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
-    """Answer from selected uploaded documents; no general-LLM fallback exists."""
+    """Answer only from the assigned handbook; no general-LLM fallback exists."""
     try:
+        assigned = get_assigned_knowledge_base()
+        assigned_document_id = str(assigned["document_id"])
+        if request.document_ids != [assigned_document_id]:
+            raise HTTPException(
+                status_code=403,
+                detail="Chat is restricted to the assigned Lumen Institute handbook.",
+            )
         result = answer_question(request.document_ids, request.question)
+    except AssignedKnowledgeBaseError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except DocumentNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except DocumentNotIndexedError as error:
@@ -152,6 +179,8 @@ def chat(request: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=500, detail=str(error)) from error
     except (TypeError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    except HTTPException:
+        raise
     except Exception as error:
         logger.exception("Document-grounded chat failed: %s", type(error).__name__)
         raise HTTPException(

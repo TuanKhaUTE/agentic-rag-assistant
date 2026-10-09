@@ -917,7 +917,7 @@ h1 {
 
 .composer {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 8px;
   padding: 7px;
@@ -1239,7 +1239,7 @@ h1 {
   }
 
   .composer {
-    grid-template-columns: 44px minmax(0, 1fr) 48px;
+    grid-template-columns: minmax(0, 1fr) 48px;
     padding: 5px;
   }
 

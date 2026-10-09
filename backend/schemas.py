@@ -31,6 +31,10 @@ class DocumentIndexResponse(BaseModel):
     embedding_dimension: int
 
 
+class AssignedKnowledgeBaseResponse(DocumentMetadataResponse):
+    title: str
+
+
 class ChatRequest(BaseModel):
     question: NonEmptyText
     document_ids: list[str] = Field(min_length=1)

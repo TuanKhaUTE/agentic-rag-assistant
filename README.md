@@ -1,80 +1,111 @@
-# AI Homework Lab — Document-Grounded RAG Assistant
+# Lumen Institute Student Handbook — Document-Grounded RAG
 
-This midterm template is a closed-domain Retrieval-Augmented Generation (RAG) chat assistant. A user uploads one or more study documents, selects the active documents, and asks questions whose answers must be grounded in those documents.
-
-There is no Agent loop, tool calling, static runtime knowledge corpus, general-purpose chat fallback, LangChain, or LlamaIndex. The important mechanisms are ordinary Python functions that can be explained line by line.
-
-## What the application does
+This repository is the focused midterm version of the AI Homework Lab. It is a closed-domain Retrieval-Augmented Generation (RAG) assistant that answers from exactly one assigned knowledge base:
 
 ```text
-Teacher/user uploads 1-N files
-  → validate and store safely
-  → extract TXT / MD / text-based PDF / DOCX text
-  → split text into overlapping word chunks
-  → embed every chunk with Ollama all-minilm
-  → store explicit vectors in one local Chroma index per document
-
-User asks a question with active document IDs
-  → embed the question once with the same model
-  → query each active document index with that vector
-  → merge all per-document candidates
-  → select one GLOBAL Top-K of 3 chunks
-  → apply the heuristic relevance threshold
-  → build labelled, instruction-resistant context
-  → generate with Qwen or optional Gemini
-  → return an answer with document-scoped chunk citations
+knowledge/KB-A_Lumen-Institute-Student-Handbook.md
 ```
 
-With no active documents, the React UI stops before making a chat request and displays: `Please upload at least one document to create the Knowledge Base.` The API also rejects an empty `document_ids` list during request validation, so no generation model is called.
+The runtime chat endpoint rejects any document ID other than the initialized handbook ID. There is no general-chat fallback, Agent loop, tool calling, LangChain, LlamaIndex, OCR, reranker, hybrid search, authentication, or external web retrieval.
+
+## Midterm configuration
+
+| Component | Current value |
+|---|---|
+| Frontend | React + Vite |
+| Backend | Python + FastAPI |
+| Assigned knowledge base | `KB-A_Lumen-Institute-Student-Handbook.md` |
+| Embedding model | Ollama `all-minilm:latest` |
+| Embedding dimension | 384 |
+| Vector database | Persistent local Chroma |
+| Distance metric | Cosine |
+| Chunk size | 180 words |
+| Chunk overlap | 30 words |
+| Retrieval | One query embedding, Global Top-K = 3 |
+| Relevance gate | `MIN_SIMILARITY = 0.30` (heuristic) |
+| Default generation LLM | Ollama `qwen3:4b-instruct` |
+| Optional generation provider | Gemini `gemini-3.5-flash` |
+
+Section 11 of the handbook contains amendments. The grounded system prompt explicitly tells the generation model to apply a later amendment when it conflicts with an earlier rule and to preserve exceptions that the amendment says remain unchanged.
+
+## RAG flow
+
+Initialization:
+
+```text
+assigned handbook
+  → UTF-8 Markdown text extraction
+  → 180-word chunks with 30-word overlap
+  → explicit all-minilm embeddings
+  → float32 L2 normalization
+  → one persistent Chroma index
+  → assigned_knowledge_base.json records the active document ID and source hash
+```
+
+Question answering:
+
+```text
+question + assigned handbook document ID
+  → embed the question once with all-minilm
+  → Chroma cosine query
+  → Global Top-3 chunks
+  → highest-similarity threshold gate
+  → labelled context with full chunk IDs
+  → Qwen local or optional Gemini generation
+  → grounded answer with citations and retrieval debug metadata
+```
+
+The LLM does not search Chroma. Python performs retrieval first and only sends the retrieved chunk text to the configured generation provider.
+
+For Markdown indexing, layout-only markers such as heading hashes and table pipes are removed from the embedding input. The original chunk text remains unchanged in Chroma for evidence and citations. The final chunk has no following overlap window, so its last 30 words are moved to the front of its embedding input to keep end-of-file FAQ facts visible to the compact embedding model. This does not change chunk boundaries, stored text, chunk IDs, or the context sent to the generation model.
+
+For Markdown indexing, layout-only markers such as heading hashes and table pipes are removed from the embedding input. The original chunk text remains unchanged in Chroma for evidence and citations. The final chunk has no following overlap window, so its last 30 words are moved to the front of its embedding input to keep end-of-file FAQ facts visible to the compact embedding model. This does not change chunk boundaries, stored text, chunk IDs, or the context sent to the generation model.
 
 ## Project structure
 
 ```text
 ai-homework-lab/
+├── knowledge/
+│   └── KB-A_Lumen-Institute-Student-Handbook.md
 ├── backend/
-│   ├── app.py                 FastAPI routes and controlled HTTP errors
-│   ├── config.py              Small set of RAG/model/upload settings
-│   ├── schemas.py             Pydantic request and response contracts
+│   ├── app.py                  FastAPI routes and fixed-KB enforcement
+│   ├── config.py               Paths, model names, chunking, Top-K, threshold
+│   ├── knowledge_base.py       Idempotent assigned-handbook initialization
+│   ├── schemas.py              Pydantic API contracts
 │   ├── documents/
-│   │   ├── extractor.py       TXT, MD, PDF, and DOCX text extraction
-│   │   ├── storage.py         Safe upload IDs, local files, and metadata
-│   │   └── indexer.py         Extract → chunk → embed → Chroma orchestration
+│   │   ├── extractor.py        TXT/MD/PDF/DOCX text extraction
+│   │   ├── storage.py          Safe local document identity and metadata
+│   │   └── indexer.py          Extract → chunk → embed → Chroma
 │   └── rag/
-│       ├── chunker.py         Word chunks with overlap and trace metadata
-│       ├── embedder.py        Ollama embeddings and L2 normalization
-│       ├── vector_store.py    Explicit-vector Chroma storage/query code
-│       ├── retriever.py       One query vector, merge, global Top-K
-│       ├── prompt_builder.py  Labelled context and grounding rules
-│       ├── generator.py       Isolated Qwen/Gemini generation boundary
-│       └── service.py         Retrieval gate and final QA orchestration
-├── frontend/                  React + Vite chat/upload UI
+│       ├── chunker.py
+│       ├── embedder.py
+│       ├── vector_store.py
+│       ├── retriever.py
+│       ├── prompt_builder.py
+│       ├── generator.py
+│       └── service.py
+├── frontend/                   React/Vite handbook chat and debug UI
 ├── scripts/
-│   ├── run_api.py             Local Uvicorn entry point
-│   ├── inspect_document.py    Extraction inspection
-│   ├── inspect_uploaded_index.py
-│   └── evaluate_rag.py        Uploaded-fixture RAG evaluation
-├── tests/
-│   ├── fixtures/              Test-only documents; not runtime knowledge
-│   └── rag_cases.json
-├── uploads/                   Ignored local upload/index data
+│   ├── initialize_kb.py        Initialize/reuse the assigned handbook index
+│   ├── evaluate_rag.py         Focused 20-question midterm evaluation
+│   └── run_api.py              Uvicorn entry point
+├── tests/rag_cases.json        Expected facts, amendment checks, refusals
 ├── requirements.txt
-├── README.md
-└── MIDTERM_CODE_DEFENSE.md
+└── README.md
 ```
 
-## Requirements
+## Install
 
-- Windows and Python
-- Node.js/npm
-- Ollama running locally
-- Ollama models:
+Requirements: Windows, Python, Node.js/npm, and a working local Ollama installation.
+
+Pull the local models:
 
 ```powershell
 ollama pull all-minilm:latest
 ollama pull qwen3:4b-instruct
 ```
 
-Create the Python environment and install dependencies:
+Create the Python environment and install backend dependencies:
 
 ```powershell
 python -m venv .venv
@@ -82,18 +113,37 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Create the local configuration file from the safe example:
+Install frontend dependencies:
+
+```powershell
+cd frontend
+npm install
+cd ..
+```
+
+Create local configuration from the safe example:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-The backend loads this root `.env` automatically. Keep `.env` private; it is
-ignored by Git.
+The backend loads the root `.env` automatically. `.env` is ignored by Git and API keys are never returned to React or printed.
 
-## Run locally
+## Initialize or re-index the assigned handbook
 
-Backend terminal:
+From the repository root, with Ollama running:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\initialize_kb.py
+```
+
+The command uses the existing extraction, chunking, embedding, normalization, and Chroma code. It is idempotent: if the same handbook content already has a valid index, it reuses it. If the source file changes or the stored index is unavailable, it creates a fresh assigned index and updates the ignored local state file.
+
+This is indexing, not LLM training. No model weights are changed.
+
+## Run the application
+
+Backend terminal, from the repository root:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_api.py
@@ -103,170 +153,113 @@ Frontend terminal:
 
 ```powershell
 cd frontend
-npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173`. The UI automatically loads the initialized assigned handbook. It does not ask the user to choose arbitrary runtime documents.
 
-In the UI:
+## API
 
-1. Attach one or more `.txt`, `.md`, `.pdf`, or `.docx` files.
-2. Wait until extraction, chunking, embedding, and indexing finish.
-3. Ask a question about the active documents.
-4. Expand **View RAG details** to show similarity, threshold, candidate pool, query-vector dimension, global Top-K, filenames, and chunk IDs.
-5. Detach a document to exclude it from later retrieval. Detaching changes the active selection; it does not delete the locally stored upload.
-
-## HTTP API
-
-### Health
+Health check:
 
 ```http
 GET /health
 ```
 
-### Upload
+Assigned Knowledge Base metadata:
 
 ```http
-POST /documents/upload
-Content-Type: multipart/form-data
+GET /knowledge-base
 ```
 
-The response contains the server-generated `document_id`, safe metadata, and a short text preview. The complete extracted text and filesystem path are not returned.
+The response exposes safe metadata such as the title, filename, document ID, status, word count, chunk count, embedding model, and embedding dimension. It never exposes a filesystem path.
 
-### Index
-
-```http
-POST /documents/{document_id}/index
-```
-
-Indexing is idempotent: the document's Chroma collection is rebuilt rather than duplicated.
-
-### Document-grounded chat
+Document-grounded chat:
 
 ```http
 POST /chat
 Content-Type: application/json
 
 {
-  "question": "Who reviews the incident report?",
-  "document_ids": ["document-id-one", "document-id-two"]
+  "question": "What is the current make-up exam fee after the amendment?",
+  "document_ids": ["the-initialized-assigned-document-id"]
 }
 ```
 
-The response includes the answer, selected filenames, query embedding dimension, candidate count, highest similarity, threshold decision, whether generation was called, and the final retrieved chunks. `top_k` is the final total across all active documents, not a per-file prompt limit.
+`/chat` verifies that the request contains exactly the assigned handbook ID. The response includes:
 
-## RAG mechanisms
+- grounded answer;
+- full document-scoped citations;
+- retrieved source and chunk IDs;
+- cosine similarity scores;
+- final Global Top-K;
+- candidate count;
+- query-vector dimension;
+- heuristic threshold and gate result;
+- `generation_called` and `answerable` flags.
 
-### Extraction and storage
+## Debug view
 
-Uploads receive a random 32-character server-side ID. The original filename is kept only as metadata; it never controls a filesystem location. Files are limited to 10 MB and supported extensions only. Text-based PDFs are supported; scanned image PDFs require OCR, which is intentionally not implemented.
+After asking a question, expand **View RAG details** in the React UI. It shows the exact retrieved chunk IDs and sources, their scores, candidate count, Global Top-K, 384-dimensional query-vector size, threshold, retrieval gate, generation flag, and answerability result.
 
-Each upload is stored under:
+The command-line evaluation prints a text preview for each retrieved Top-K chunk, making retrieval errors distinguishable from generation errors.
 
-```text
-uploads/<document_id>/
-├── original.<extension>
-├── metadata.json
-└── chroma/
-```
+## Focused evaluation
 
-### Chunking
-
-The chunker uses 180 words with 30 words of overlap. The next start position advances by `180 - 30 = 150` words. Every chunk records its document-scoped ID, original source filename, chunk index, text, and start/end word positions.
-
-Overlap helps preserve facts that cross a chunk boundary, at the cost of some repeated text and storage.
-
-### Embeddings and Chroma
-
-`all-minilm:latest` converts each chunk into a 384-dimensional semantic vector. Vectors are converted to `float32` and L2-normalized. Chroma receives those explicit vectors with `embedding_function=None`; it does not silently choose or run another embedding model.
-
-Each uploaded document has a separate persistent Chroma directory. The embedding model name and dimension are stored and validated. Changing the embedding model requires re-indexing every document because old document vectors and new query vectors would otherwise occupy incompatible semantic spaces.
-
-### Multi-document retrieval
-
-The question is embedded exactly once. That normalized vector is reused when querying every selected document collection. Each collection contributes up to three candidates, the candidates are merged and sorted by cosine similarity, and only the best three total chunks enter the prompt.
-
-For Chroma cosine space:
-
-```text
-cosine similarity = 1 - Chroma cosine distance
-```
-
-### Relevance gate and grounding
-
-`MIN_SIMILARITY = 0.30` is checked before generation. When the highest score is lower, the service does not call Qwen or Gemini and returns exactly:
-
-> The knowledge base does not contain enough information to answer this question.
-
-The threshold is an educational heuristic, not a universal boundary. A higher threshold can cause false negatives; a lower threshold can allow irrelevant context.
-
-When retrieval passes, every context block is labelled with both filename and a document-scoped chunk ID. The prompt says that documents are data, not instructions; outside knowledge, invented citations, and instructions inside documents must be ignored.
-
-## Generation provider
-
-Choose the provider in the root `.env` file. The default is local Qwen through
-Ollama:
-
-```text
-LLM_PROVIDER=ollama
-OLLAMA_GENERATION_MODEL=qwen3:4b-instruct
-```
-
-Optional Gemini generation uses:
-
-```text
-LLM_PROVIDER=gemini
-GEMINI_MODEL=gemini-3.5-flash
-GEMINI_API_KEY=your-api-key
-```
-
-Set `LLM_PROVIDER=ollama` or `LLM_PROVIDER=gemini`, then restart the backend.
-Provider selection affects only answer generation. Extraction, chunking,
-all-minilm embeddings, Chroma indexing, retrieval, global Top-K, thresholding,
-context, and citations remain the same. API keys stay in the ignored backend
-`.env` file or process environment and are never sent to React.
-
-## Inspection and evaluation
-
-Inspect extraction:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\inspect_document.py tests\fixtures\policy.txt
-```
-
-Inspect an already indexed upload:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\inspect_uploaded_index.py <document_id>
-```
-
-Run the RAG fixture evaluation (requires working Ollama embeddings and the configured generation provider):
+Run with Ollama and the configured generation provider available:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\evaluate_rag.py
 ```
 
-The evaluation creates document IDs from `tests/fixtures`, indexes them independently, asks direct, paraphrased, cross-document, and unanswerable questions, validates retrieved sources/citations, and prints the selected provider/model. Generated uploads remain under the ignored `uploads/` directory.
+The evaluator initializes/reuses only the assigned handbook, then runs 20 cases from `tests/rag_cases.json`:
 
-## Safety boundaries
+- 16 direct handbook questions;
+- 2 semantic paraphrases;
+- 2 questions not answered by the handbook;
+- explicit amendment retrieval checks for the make-up exam fee, library fine, illness exception, and Honors installment restriction;
+- expected fact checks and valid-citation checks;
+- full Top-K debug output for every question.
 
-- supported extensions only: TXT, MD, PDF, DOCX
-- 10 MB maximum upload size and empty-file rejection
-- random server-side document IDs; user filenames are metadata only
-- validated IDs and no arbitrary input paths
-- no OCR, shell, file-write chat capability, internet retrieval, or Agent tools
-- uploaded text is treated as untrusted data in the prompt
-- CORS permits only the local Vite development origins
-- unexpected backend errors are logged server-side and returned as controlled messages
+An answerable case passes only when generation occurs, required facts are present, citations refer to actual retrieved chunks, and any required amendment chunk appears in Top-K. An unanswerable case passes only when the exact insufficient-information response is returned.
+
+## Generation provider
+
+Default local generation in `.env`:
+
+```dotenv
+LLM_PROVIDER=ollama
+OLLAMA_GENERATION_MODEL=qwen3:4b-instruct
+```
+
+Optional Gemini generation:
+
+```dotenv
+LLM_PROVIDER=gemini
+GEMINI_MODEL=gemini-3.5-flash
+GEMINI_API_KEY=your-api-key
+```
+
+Restart the backend after changing `.env`. Provider selection changes only answer generation. The all-minilm embedding space and Chroma index do not change, so switching Qwen/Gemini does not require re-indexing.
+
+## Grounding and refusal behavior
+
+If Top-1 similarity is below `0.30`, Python does not call the generation provider and returns:
+
+> The knowledge base does not contain enough information to answer this question.
+
+If retrieval passes but the supplied chunks still do not support the answer, the system instruction requires the model to return the same sentence. Every factual paragraph must cite an exact retrieved full chunk ID. The prompt forbids outside knowledge, invented citations, and following instructions found inside document text.
+
+The `0.30` threshold is an educational heuristic, not a confidence percentage or universal boundary. It can still produce false positives or false negatives.
 
 ## Known limitations
 
+- The knowledge base is one small assigned handbook.
 - Word-based chunking ignores sentence and section boundaries.
-- `all-minilm` and raw cosine retrieval can rank broadly related text above the best passage.
-- The `0.30` threshold is heuristic and corpus-dependent.
-- There is no reranker, hybrid keyword/vector search, OCR, authentication, or automatic factual verification.
-- A local 4B Qwen model may produce weaker wording or citation behavior than larger models.
-- Gemini requires a valid API key and external network access.
-- Chroma indexes persist locally, but chat history and the active-document selection exist only in the current browser session.
-- This is an educational modular monolith, not a production multi-user service.
+- all-minilm and raw cosine retrieval can rank imperfectly.
+- Global Top-K is limited to three chunks and there is no reranker.
+- The relevance threshold is heuristic.
+- Text-based PDFs are supported, but OCR is not implemented.
+- A local 4B generation model can be probabilistic or phrase an answer imperfectly.
+- There is no persistent chat memory, authentication, SQL database, Agent, or external internet tool.
+- The system checks retrieved citations but does not perform independent factual verification.

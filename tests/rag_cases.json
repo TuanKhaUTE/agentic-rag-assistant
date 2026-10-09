@@ -1,32 +1,126 @@
 [
   {
-    "id": "A",
+    "id": "1",
     "type": "answerable",
-    "question": "When is the annual progress review held and who leads it?",
-    "expected_sources": ["policy.txt"]
+    "question": "What is the tuition per semester for Standard and Honors students?",
+    "required_patterns": ["42[,\\.]?000[,\\.]?000", "58[,\\.]?000[,\\.]?000"]
   },
   {
-    "id": "B",
+    "id": "2",
     "type": "answerable",
-    "question": "What should someone do first when something dangerous happens in the lab?",
-    "expected_sources": ["incident.md"]
+    "question": "What is the minimum GPA for an Honors student to remain in good standing?",
+    "required_patterns": ["3\\.2"]
   },
   {
-    "id": "C",
+    "id": "3",
     "type": "answerable",
-    "question": "How can a student reach the development server from outside campus?",
-    "expected_sources": ["remote_access.txt"]
+    "question": "How many credits can a Standard Program student with GPA 3.6 register for?",
+    "required_patterns": ["27\\s+credits"]
   },
   {
-    "id": "D",
+    "id": "4",
     "type": "answerable",
-    "question": "Who records academic follow-up actions, and who reviews a laboratory incident report?",
-    "expected_sources": ["policy.txt", "incident.md"]
+    "question": "Can a student on academic probation use credit overload?",
+    "required_patterns": ["(may not|cannot|can not|not allowed).*(credit overload)|credit overload.*(may not|cannot|can not|not allowed)"]
   },
   {
-    "id": "E",
+    "id": "5",
+    "type": "answerable",
+    "question": "What are the library opening hours during exam weeks?",
+    "required_patterns": ["23:00", "Sunday", "8:00", "17:00"]
+  },
+  {
+    "id": "6",
+    "type": "answerable",
+    "question": "What is the current make-up exam fee after the amendment?",
+    "required_patterns": ["200[,\\.]?000\\s+VND"],
+    "required_chunk_indexes": [6]
+  },
+  {
+    "id": "7",
+    "type": "answerable",
+    "question": "Is a make-up exam free for illness with a hospital certificate?",
+    "required_patterns": ["free", "hospital certificate"],
+    "required_chunk_indexes": [6]
+  },
+  {
+    "id": "8",
+    "type": "answerable",
+    "question": "What is the library late fine on or after 1 January 2027?",
+    "required_patterns": ["3[,\\.]?000\\s+VND", "per book per day"],
+    "required_chunk_indexes": [6]
+  },
+  {
+    "id": "9",
+    "type": "answerable",
+    "question": "What is the maximum late fine for one library book?",
+    "required_patterns": ["100[,\\.]?000\\s+VND"]
+  },
+  {
+    "id": "10",
+    "type": "answerable",
+    "question": "Can an Honors Program student use the installment tuition plan after the amendment?",
+    "required_patterns": ["(no longer|cannot|can not|not available).*(Honors|installment)|Honors.*(no longer|cannot|can not|not available)"],
+    "required_chunk_indexes": [6]
+  },
+  {
+    "id": "11",
+    "type": "answerable",
+    "question": "What are the Aurora Scholarship requirements?",
+    "required_patterns": ["3\\.8", "90"]
+  },
+  {
+    "id": "12",
+    "type": "answerable",
+    "question": "What are the Beacon Scholarship requirements?",
+    "required_patterns": ["3\\.4", "50%"]
+  },
+  {
+    "id": "13",
+    "type": "answerable",
+    "question": "What is the dormitory curfew on Friday night?",
+    "required_patterns": ["24:00"]
+  },
+  {
+    "id": "14",
+    "type": "answerable",
+    "question": "Where is a make-up exam request submitted?",
+    "required_patterns": ["Academic Affairs Office", "Building A", "Room 102"]
+  },
+  {
+    "id": "15",
+    "type": "answerable",
+    "question": "Who should students contact about scholarships?",
+    "required_patterns": ["Student Services Office", "services@lumen\\.edu\\.vn"]
+  },
+  {
+    "id": "16",
+    "type": "answerable",
+    "question": "What happens if an Honors student graduates with a cumulative GPA below 3.2?",
+    "required_patterns": ["Standard degree"]
+  },
+  {
+    "id": "17",
+    "type": "answerable",
+    "question": "A regular-track learner has a cumulative 3.6 GPA. What is the heaviest study load they may take?",
+    "required_patterns": ["27\\s+credits"]
+  },
+  {
+    "id": "18",
+    "type": "answerable",
+    "question": "During finals, how late can I study in the library, and can I go there on Sunday?",
+    "required_patterns": ["23:00", "Sunday", "8:00", "17:00"]
+  },
+  {
+    "id": "19",
     "type": "unanswerable",
-    "question": "What is the university president's private phone number?",
-    "expected_sources": []
+    "question": "What is the name of the president of Lumen Institute?",
+    "required_patterns": []
+  },
+  {
+    "id": "20",
+    "type": "unanswerable",
+    "question": "How much does a student parking permit cost?",
+    "required_patterns": []
   }
 ]

@@ -23,6 +23,18 @@ async function controlledError(response, fallbackMessage) {
 }
 
 
+export async function getAssignedKnowledgeBase() {
+  const response = await fetch(`${API_BASE_URL}/knowledge-base`);
+  if (!response.ok) {
+    throw await controlledError(
+      response,
+      "The assigned knowledge base is unavailable. Run the initializer first.",
+    );
+  }
+  return response.json();
+}
+
+
 export async function uploadDocument(file) {
   const formData = new FormData();
   formData.append("file", file);

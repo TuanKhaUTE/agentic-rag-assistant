@@ -7,8 +7,15 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
+ASSIGNED_KB_PATH = (
+    PROJECT_ROOT / "knowledge" / "KB-A_Lumen-Institute-Student-Handbook.md"
+)
+ASSIGNED_KB_TITLE = "Lumen Institute — Student Handbook"
+ASSIGNED_KB_INDEX_VERSION = 2
+
 UPLOADED_CHROMA_COLLECTION = "uploaded_document"
 UPLOADS_DIR = PROJECT_ROOT / "uploads"
+ASSIGNED_KB_STATE_PATH = UPLOADS_DIR / "assigned_knowledge_base.json"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 TEXT_PREVIEW_CHARACTERS = 500
 
