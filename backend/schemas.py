@@ -49,6 +49,7 @@ class RetrievedChunkResponse(BaseModel):
     source: str
     document_id: str
     chunk_index: int
+    text: str
 
 
 class ChatResponse(BaseModel):

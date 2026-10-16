@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from backend.config import MIN_SIMILARITY, TOP_K
@@ -13,6 +14,29 @@ THRESHOLD_NOTE = (
     f"The {MIN_SIMILARITY:.2f} similarity threshold is an educational heuristic, "
     "not a universal relevance boundary."
 )
+
+DOCUMENT_SCOPED_CITATION_PATTERN = re.compile(
+    r"\[(?:citation\s*:\s*)?([0-9a-f]{32}#chunk-\d{3})\]",
+    flags=re.IGNORECASE,
+)
+
+
+def _contains_refusal(answer: str) -> bool:
+    normalized = re.sub(r"\s+", " ", answer).replace("**", "").casefold()
+    return INSUFFICIENT_INFORMATION_MESSAGE.casefold() in normalized
+
+
+def _normalize_citations(
+    answer: str,
+    retrieved_chunks: list[dict[str, object]],
+) -> str:
+    allowed_ids = {str(chunk["chunk_id"]) for chunk in retrieved_chunks}
+
+    def replace(match: re.Match[str]) -> str:
+        chunk_id = match.group(1)
+        return f"[{chunk_id}]" if chunk_id in allowed_ids else match.group(0)
+
+    return DOCUMENT_SCOPED_CITATION_PATTERN.sub(replace, answer)
 
 
 def answer_question(
@@ -43,7 +67,23 @@ def _answer_from_retrieval(
         )
         answer = generate_answer(system_message, user_message)
         generation_called = True
+        if _contains_refusal(answer):
+            recheck_message = (
+                f"{user_message}\n\n"
+                "Recheck the evidence once before finalizing. Do not refuse merely "
+                "because a question value is not written verbatim: apply supported "
+                "simple arithmetic and explicit numeric thresholds or ranges. Still "
+                "preserve exact entities, categories, conditions, and modifiers. If "
+                "the complete answer remains unsupported, return only the required "
+                "insufficient-information sentence."
+            )
+            answer = generate_answer(system_message, recheck_message)
     else:
+        answer = INSUFFICIENT_INFORMATION_MESSAGE
+
+    # Keep a model refusal exact even if the model surrounds it with explanation.
+    answer = _normalize_citations(answer, top_results)
+    if _contains_refusal(answer):
         answer = INSUFFICIENT_INFORMATION_MESSAGE
 
     # After retrieval passes, the configured generator can still find that the

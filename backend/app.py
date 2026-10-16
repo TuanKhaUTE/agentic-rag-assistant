@@ -150,6 +150,7 @@ def _retrieved_chunk_responses(result: dict[str, object]) -> list[dict[str, obje
             "source": chunk["source"],
             "document_id": chunk["document_id"],
             "chunk_index": chunk["chunk_index"],
+            "text": chunk["text"],
         }
         for chunk in result["top_results"]
     ]

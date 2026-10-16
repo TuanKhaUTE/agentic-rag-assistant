@@ -7,6 +7,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 from backend.config import (  # noqa: E402
     ASSIGNED_KB_PATH,
     EMBEDDING_MODEL,
@@ -61,6 +64,10 @@ def main() -> None:
         patterns_ok = _patterns_match(
             case.get("required_patterns", []), str(result["answer"])
         )
+        forbidden_patterns_ok = not any(
+            re.search(pattern, str(result["answer"]), flags=re.IGNORECASE | re.DOTALL)
+            for pattern in case.get("forbidden_patterns", [])
+        )
 
         if case["type"] == "answerable":
             passed = bool(
@@ -70,9 +77,13 @@ def main() -> None:
                 and patterns_ok
                 and required_chunks_retrieved
                 and sources_valid
+                and forbidden_patterns_ok
             )
         else:
-            passed = str(result["answer"]) == INSUFFICIENT_INFORMATION_MESSAGE
+            passed = bool(
+                str(result["answer"]) == INSUFFICIENT_INFORMATION_MESSAGE
+                and forbidden_patterns_ok
+            )
 
         rows.append(
             {
@@ -112,6 +123,11 @@ def main() -> None:
                     "Required amendment chunk retrieved: "
                     + ("yes" if required_chunks_retrieved else "no")
                 )
+        if case.get("forbidden_patterns"):
+            print(
+                "Forbidden claims absent: "
+                + ("yes" if forbidden_patterns_ok else "no")
+            )
         print(f"Result: {'PASS' if passed else 'FAIL'}")
 
     passed_count = sum(bool(row["passed"]) for row in rows)

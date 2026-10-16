@@ -32,5 +32,5 @@ OLLAMA_GENERATION_MODEL = os.getenv(
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-TOP_K = 3
+TOP_K = 5
 MIN_SIMILARITY = 0.30

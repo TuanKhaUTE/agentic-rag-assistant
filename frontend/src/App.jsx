@@ -84,8 +84,17 @@ function DocumentMetadata({ result }) {
         <ol className="source-list">
           {result.retrieved_chunks.map((chunk) => (
             <li key={chunk.chunk_id}>
-              <span><b>{chunk.source}</b><small>{chunk.chunk_id}</small></span>
-              <strong>{chunk.score.toFixed(3)}</strong>
+              <div className="source-entry-header">
+                <span>
+                  <b>Rank {chunk.rank} · {chunk.source}</b>
+                  <small>{chunk.chunk_id}</small>
+                </span>
+                <strong>Similarity {chunk.similarity.toFixed(3)}</strong>
+              </div>
+              <details className="retrieved-text">
+                <summary>Show retrieved chunk text</summary>
+                <p>{chunk.text}</p>
+              </details>
             </li>
           ))}
         </ol>

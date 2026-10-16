@@ -122,5 +122,38 @@
     "type": "unanswerable",
     "question": "How much does a student parking permit cost?",
     "required_patterns": []
+  },
+  {
+    "id": "21",
+    "type": "answerable",
+    "question": "What are the library opening hours on a normal Tuesday?",
+    "required_patterns": ["7:00", "21:30"]
+  },
+  {
+    "id": "22",
+    "type": "answerable",
+    "question": "How much is the make-up exam fee?",
+    "required_patterns": ["200[,\\.]?000\\s+VND"],
+    "required_chunk_indexes": [6]
+  },
+  {
+    "id": "23",
+    "type": "answerable",
+    "question": "How many credits do I need to graduate from the Honors Program?",
+    "required_patterns": ["140\\s+credits"]
+  },
+  {
+    "id": "24",
+    "type": "answerable",
+    "question": "An Honors student has GPA 3.5 and is in good standing. How much tuition do they pay per semester after their scholarship?",
+    "required_patterns": ["29[,\\.]?000[,\\.]?000\\s+VND"],
+    "required_chunk_indexes": [1, 4]
+  },
+  {
+    "id": "25",
+    "type": "unanswerable",
+    "question": "How much does a single room in the dormitory cost?",
+    "required_patterns": [],
+    "forbidden_patterns": ["1[,\\.]?100[,\\.]?000", "1[,\\.]?800[,\\.]?000"]
   }
 ]

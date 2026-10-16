@@ -26,7 +26,7 @@ def _generate_with_ollama(system_message: str, user_message: str) -> str:
             {"role": "user", "content": user_message},
         ],
         options={
-            "temperature": 0.1,
+            "temperature": 0.0,
             "num_ctx": 4096,
             "num_predict": 512,
         },
@@ -48,7 +48,7 @@ def _generate_with_gemini(system_message: str, user_message: str) -> str:
             contents=user_message,
             config=types.GenerateContentConfig(
                 system_instruction=system_message,
-                temperature=0.1,
+                temperature=0.0,
                 max_output_tokens=512,
             ),
         )

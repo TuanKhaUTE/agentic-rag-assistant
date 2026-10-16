@@ -680,10 +680,7 @@ h1 {
 }
 
 .source-list li {
-  display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
   padding: 8px 10px;
   border-radius: 8px;
   color: var(--ink-soft);
@@ -693,30 +690,58 @@ h1 {
   line-height: 1.45;
 }
 
-.source-list span {
+.source-entry-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.source-entry-header span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.source-list span b,
-.source-list span small {
+.source-entry-header span b,
+.source-entry-header span small {
   display: block;
 }
 
-.source-list span b {
+.source-entry-header span b {
   margin-bottom: 2px;
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   font-size: 0.7rem;
 }
 
-.source-list span small {
+.source-entry-header span small {
   font: inherit;
 }
 
-.source-list strong {
+.source-entry-header > strong {
   color: var(--forest-700);
   font-family: inherit;
+}
+
+.retrieved-text {
+  margin-top: 8px;
+  border-top: 1px solid #dce5df;
+  padding-top: 7px;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.retrieved-text summary {
+  color: var(--forest-700);
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.retrieved-text p {
+  margin: 8px 0 2px;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 
 .thinking {
